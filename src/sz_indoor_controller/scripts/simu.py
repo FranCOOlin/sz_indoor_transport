@@ -6,7 +6,7 @@ import numpy as np
 from sz_indoor_controller.msg import UAVCommand, UAVState
 # from nav_msgs.msg import Odometry
 
-# 引入 QSLS 模型
+# 引入 Quadrotor 模型
 from scipy.integrate import ode
 from numpy.linalg import norm
 
@@ -66,13 +66,13 @@ class UAVSimulatorNode:
         uav_id = rospy.get_param('~uav_id', "")
         if uav_id=="":
             rospy.logerr("Please specify the UAV ID")
-            exit(-1)
+            # exit(-1)
         else:
             rospy.loginfo("UAV ID: %s", uav_id)
-        # 初始状态：位置、速度、方向等
+        # 初始状态
         init_state = [10, 10, 1, 0, 0, 0, 1, 0, 0, 0]
-        self.simu_model = Quadrotor(init_state)
-
+        self.simuRate = 300
+        self.simu_model = Quadrotor(init_state,dt=1/self.simuRate)
         # 订阅控制输入
         self.control_sub = rospy.Subscriber(uav_id+'/control', UAVCommand, self.control_callback)
 
@@ -83,7 +83,7 @@ class UAVSimulatorNode:
         self.control_input = [9.81 * (0.32), 0, 0, 0]  # 默认推力平衡重力
 
         # 仿真频率
-        self.rate = rospy.Rate(300)
+        self.rate = rospy.Rate(self.simuRate)
 
     def control_callback(self, msg: UAVCommand):
         # 更新控制输入

@@ -3,18 +3,18 @@
         "g": 9.81,
         "max_thrust": 20.0,
         "quadrotor": {
-            "mq": 0.207,
+            "mq": 0.628,
             "kp": 9.75,
             "kv": 3.6,
             "kr": 120,
             "hr": 30
         },
-        "QSLS": {
-            "bar_mQ": 0.207,
-            "bar_mL": 0.053,
-            "l": 0.73,
+        "QSLS":{
+            "bar_mQ": 0.628,
+            "bar_mL": 0.51,
+            "l": 0.805,
             "beta": 0.5,
-            "k1": 2,
+            "k1": 1,
             "ks1": 5,
             "k2": 1,
             "ks2": 3,
@@ -25,11 +25,13 @@
             "hr": 30,
             "kr": 50
         },
+        
         "use_polyval": true,
         "p1": [
-            0.0000000005424605,
-            0.0011628, 
-            -0.0101188
+            0.0000000005424605, 
+            0.000158489111204, 
+            0.015382950176701
+           
         ],
         "p2": [
             0.000413683067484175,
@@ -48,42 +50,42 @@
         ]
     },
     "observer": {
-        "covQ_pQ_diag": [
+        "covQ_pQ_diag":[
             1e-3,
             1e-3,
             1e-3
         ],
-        "covQ_vQ_diag": [
+        "covQ_vQ_diag":[
             1e-3,
             1e-3,
             1e-3
         ],
-        "covQ_pL_diag": [
+        "covQ_pL_diag":[
             1e-2,
             1e-2,
             1e-2
         ],
-        "covQ_vL_diag": [
+        "covQ_vL_diag":[
             1e-2,
             1e-2,
             1e-2
         ],
-        "covQ_bQ_diag": [
+        "covQ_bQ_diag":[
             1e-2,
             1e-2,
             1e-2
         ],
-        "covQ_bL_diag": [
+        "covQ_bL_diag":[
             1e-2,
             1e-2,
             1e-2
         ],
-        "covR_pQ_diag": [
+        "covR_pQ_diag":[
             1e-4,
             1e-4,
             1e-4
         ],
-        "covR_q_diag": [
+        "covR_q_diag":[
             1e-4,
             1e-4,
             1e-4
@@ -92,12 +94,5 @@
     "traj_gen": {
         "speed": 2.0,
         "mode": 0
-    },
-    "force_sensor": {
-        "M": [
-            1, 0, 0,
-            0, 1, 0,
-            0, 0, 1
-        ]
     }
 }
