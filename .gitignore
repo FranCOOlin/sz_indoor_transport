@@ -1,0 +1,75 @@
+# =========================
+# ROS / Catkin workspace
+# =========================
+/build/
+/devel/
+/install/
+/log/
+/logs/
+/.catkin_tools/
+
+# catkin_make / CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# =========================
+# ROS runtime files
+# =========================
+*.bag
+*.bag.active
+*.db3
+*.mcap
+*.log
+
+# roslaunch / roscore logs
+.ros/
+rosout.log
+
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+
+# =========================
+# C / C++ build artifacts
+# =========================
+*.o
+*.so
+*.a
+*.d
+*.out
+*.elf
+
+# =========================
+# Editor / IDE
+# =========================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# =========================
+# OS files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Project data
+# =========================
+/bag/
+/data/
+/log/
+
+# Keep empty folders if needed
+!/bag/.gitkeep
+!/data/.gitkeep
+!/log/.gitkeep
