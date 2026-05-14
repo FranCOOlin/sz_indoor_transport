@@ -336,6 +336,22 @@ class MultiTrajRouterNode:
             elapsed = (current_time - state.state_start_time).to_sec()
             since_last_point = (current_time - state.last_point_time).to_sec()
             
+            # ===== 只在 IDLE 状态发布当前位置悬停 =====
+            if state.current_state == state.STATE_IDLE:
+                hover_point = TrajPoint()
+                hover_point.pd.x = state.current_x
+                hover_point.pd.y = state.current_y
+                hover_point.pd.z = state.current_z
+                hover_point.dpd.x = hover_point.dpd.y = hover_point.dpd.z = 0.0
+                hover_point.d2pd.x = hover_point.d2pd.y = hover_point.d2pd.z = 0.0
+                hover_point.d3pd.x = hover_point.d3pd.y = hover_point.d3pd.z = 0.0
+                hover_point.d4pd.x = hover_point.d4pd.y = hover_point.d4pd.z = 0.0
+                hover_point.d5pd.x = hover_point.d5pd.y = hover_point.d5pd.z = 0.0
+                hover_point.yawd = 0.0
+                hover_point.yawd_dot = 0.0
+                state.trajectory_pub.publish(hover_point)
+            # ===== 新增结束 =====
+
             # 发布轨迹点
             if state.current_state == state.STATE_TAKEOFF:
                 point = self.set_height(elapsed, state.takeoff_duration,
