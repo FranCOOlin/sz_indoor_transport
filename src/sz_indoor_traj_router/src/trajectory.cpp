@@ -20,7 +20,8 @@ private:
     Eigen::Vector3d d_offsets[4];      
     Eigen::Vector3d circle_formation_offsets[4];
     Eigen::Vector3d eight_formation_offsets[4];
-    int uav_ids[4] = {0, 1, 3, 4};     
+    Eigen::Vector3d virtual_eight_formation_offsets[4];
+    int uav_ids[4] = {1, 2, 3, 4};     
     bool ready_flags[4] = {false, false, false, false};
     bool all_ready = false;
     bool trajectory_request_received = false;
@@ -33,6 +34,7 @@ private:
     double omega = 0.3;
     double start_angle = 0.0;
     Eigen::Vector3d circle_center;
+    Eigen::Vector3d virtual_leader_0;
     double start_time;
 
 public:
@@ -45,10 +47,10 @@ public:
 
         for (int i = 0; i < 4; ++i) {
             int id = uav_ids[i];
-            std::string uav_ns = "/uav17" + std::to_string(id);
+            std::string uav_ns = "/uav" + std::to_string(id);
             traj_pub[i] = nh.advertise<sz_indoor_controller::TrajPoint>(uav_ns + "/planning/traj_point", 10);
 
-            std::string flag_topic = "/uav17" + std::to_string(id) + "/traj_generation_flag";
+            std::string flag_topic = "/uav" + std::to_string(id) + "/traj_generation_flag";
             flag_subs[i] = nh.subscribe<std_msgs::Bool>(
                 flag_topic, 1, boost::bind(&FormationPlanner::flagCallback, this, _1, i));
 
@@ -61,7 +63,7 @@ public:
 
         ros::Time::waitForValid();
         timer = nh.createTimer(ros::Duration(0.01), &FormationPlanner::timerCallback, this);
-        ROS_INFO("Formation Planner Initialized. Waiting for UAVs 170, 171, 173, 174...");
+        ROS_INFO("Formation Planner Initialized. Waiting for UAVs 1, 2, 3, 4...");
         ROS_INFO("Master trajectory params: omega=%.3f, center_xy=[0.000, 0.000]", omega);
     }
 
@@ -78,8 +80,10 @@ public:
             requested_choice = 1;
         } else if (msg->data == "trajectory2") {
             requested_choice = 2;
+        } else if (msg->data == "trajectory3") {
+            requested_choice = 3;
         } else {
-            ROS_WARN("Unsupported /trajectory_request: %s. Use trajectory1 for circle, trajectory2 for figure-eight.",
+            ROS_WARN("Unsupported /trajectory_request: %s. Use trajectory1 for circle, trajectory2 for master figure-eight, trajectory3 for virtual-leader figure-eight.",
                      msg->data.c_str());
             return;
         }
@@ -118,16 +122,16 @@ public:
         jL << -radius * pow(omega, 3) * st, radius * pow(omega, 3) * ct, 0.0;
     }
 
-    void computeEightMaster(double t, Eigen::Vector3d& pL, Eigen::Vector3d& vL,
-                            Eigen::Vector3d& aL, Eigen::Vector3d& jL) {
+    void computeEightTrajectory(const Eigen::Vector3d& start, double t, Eigen::Vector3d& pL,
+                                Eigen::Vector3d& vL, Eigen::Vector3d& aL, Eigen::Vector3d& jL) {
         double theta = omega * t;
         double st = sin(theta);
         double ct = cos(theta);
         double c2t = cos(2.0 * theta);
 
-        pL << d_offsets[0].x() + st,
-              d_offsets[0].y() + ct * st,
-              d_offsets[0].z();
+        pL << start.x() + st,
+              start.y() + ct * st,
+              start.z();
         vL << omega * ct,
               omega * c2t,
               0.0;
@@ -139,9 +143,21 @@ public:
               0.0;
     }
 
+    void computeEightMaster(double t, Eigen::Vector3d& pL, Eigen::Vector3d& vL,
+                            Eigen::Vector3d& aL, Eigen::Vector3d& jL) {
+        computeEightTrajectory(d_offsets[0], t, pL, vL, aL, jL);
+    }
+
+    void computeVirtualEightMaster(double t, Eigen::Vector3d& pL, Eigen::Vector3d& vL,
+                                   Eigen::Vector3d& aL, Eigen::Vector3d& jL) {
+        computeEightTrajectory(virtual_leader_0, t, pL, vL, aL, jL);
+    }
+
     void computeMaster(double t, Eigen::Vector3d& pL, Eigen::Vector3d& vL,
                        Eigen::Vector3d& aL, Eigen::Vector3d& jL) {
-        if (active_traj_choice == 2) {
+        if (active_traj_choice == 3) {
+            computeVirtualEightMaster(t, pL, vL, aL, jL);
+        } else if (active_traj_choice == 2) {
             computeEightMaster(t, pL, vL, aL, jL);
         } else {
             computeCircleMaster(t, pL, vL, aL, jL);
@@ -168,7 +184,7 @@ public:
     void flagCallback(const std_msgs::Bool::ConstPtr& msg, int index) {
             if (msg->data && !ready_flags[index]) {
                 ready_flags[index] = true;
-                ROS_INFO("UAV 17%d is READY at pos: [%.2f, %.2f, %.2f]", 
+                ROS_INFO("UAV %d is READY at pos: [%.2f, %.2f, %.2f]", 
                          uav_ids[index], current_pos[index].x(), current_pos[index].y(), current_pos[index].z());
     
                 if (!all_ready) {
@@ -185,6 +201,11 @@ public:
                         start_angle = atan2(master_radius.y(), master_radius.x());
                         radius = master_radius.head<2>().norm();
                         circle_center.z() = d_offsets[0].z();
+                        virtual_leader_0.setZero();
+                        for (int j = 0; j < 4; ++j) {
+                            virtual_leader_0 += d_offsets[j];
+                        }
+                        virtual_leader_0 /= 4.0;
 
                         Eigen::Matrix3d circle_R0 = makeFrame(Eigen::Vector3d(radius * omega * sin(start_angle),
                                                                                -radius * omega * cos(start_angle),
@@ -193,12 +214,15 @@ public:
                         for (int j = 0; j < 4; ++j) {
                             circle_formation_offsets[j] = circle_R0.transpose() * (d_offsets[j] - d_offsets[0]);
                             eight_formation_offsets[j] = eight_R0.transpose() * (d_offsets[j] - d_offsets[0]);
+                            virtual_eight_formation_offsets[j] = eight_R0.transpose() * (d_offsets[j] - virtual_leader_0);
                         }
                         all_ready = true;
                         ROS_INFO("ALL UAVS READY! Offsets recorded. Starting trajectory...");
                         ROS_INFO("Master starts from current position [%.3f, %.3f, %.3f], circle center=[%.3f, %.3f, %.3f], actual radius=%.3f, start_angle=%.3f",
                                  d_offsets[0].x(), d_offsets[0].y(), d_offsets[0].z(),
                                  circle_center.x(), circle_center.y(), circle_center.z(), radius, start_angle);
+                        ROS_INFO("Virtual leader initial position [%.3f, %.3f, %.3f]",
+                                 virtual_leader_0.x(), virtual_leader_0.y(), virtual_leader_0.z());
                         tryStartTrajectory();
                     }
                 }
@@ -228,7 +252,12 @@ public:
         for (int i = 0; i < 4; ++i) {
             sz_indoor_controller::TrajPoint msg_out;
 
-            Eigen::Vector3d formation_offset = active_traj_choice == 2 ? eight_formation_offsets[i] : circle_formation_offsets[i];
+            Eigen::Vector3d formation_offset = circle_formation_offsets[i];
+            if (active_traj_choice == 2) {
+                formation_offset = eight_formation_offsets[i];
+            } else if (active_traj_choice == 3) {
+                formation_offset = virtual_eight_formation_offsets[i];
+            }
             Eigen::Vector3d pFi = pL + R_TI * formation_offset;
             Eigen::Vector3d dpFi = vL + dR_TI * formation_offset;
             Eigen::Vector3d ddpFi = aL + ddR_TI * formation_offset;
