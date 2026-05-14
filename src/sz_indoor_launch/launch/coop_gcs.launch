@@ -64,6 +64,7 @@
           name="traj_router"
           output="$(arg traj_router_output)">
         <param name="uav_id" value="$(arg traj_router_uav_id)"/>
+        <param name="participants" value="$(arg participants)"/>
         <param name="target_height" value="$(arg takeoff_height)"/>
         <param name="takeoff_duration" value="$(arg takeoff_duration)"/>
         <param name="traj_type" value="$(arg traj_type)"/>

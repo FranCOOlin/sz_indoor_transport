@@ -283,6 +283,7 @@ debug mock 用于本地联调 GCS 和 traj_router。它模拟 UAV 侧接口：
 - 提供 `/<uav_id>/fsm/command`，接收 GCS 广播的命令。
 - 可自动发送 `prepared` 和 `achieve` 给 GCS。
 - 可监听 GCS status，在 GCS reset 后清空 mock 的单轮状态。
+- 可通过 `mock_publish_traj_flags:=true` 发布 `/<uav_id>/traj_generation_flag`。
 - `mock_achieve_delay` 会影响从 `TAKEOFF` 到 `TRAJ_FOLLOWING` 的速度。
 
 如果 debug launch 一进入 `TAKEOFF` 很快就进入 `TRAJ_FOLLOWING`，通常是因为
@@ -422,6 +423,9 @@ roslaunch sz_indoor_launch debug_gcs_traj_router.launch
 四台无人机的默认位置分布在半径 `mock_initial_radius` 的圆上，因此每台位置都不同；
 默认 `mock_initial_radius=1.0`、`mock_initial_z=0.0`。
 
+`/<uav_id>/traj_generation_flag` 默认不发布。如果 trajectory_node 或旧联调链路需要这些
+flag，可启动时加 `mock_publish_traj_flags:=true`。
+
 联调流程：
 
 1. 等 `GCS Info` 里 `prepared all=True`。
@@ -443,6 +447,7 @@ roslaunch sz_indoor_launch debug_gcs_traj_router.launch \
   traj_type:=1 \
   trajectory_omega:=0.2 \
   mock_auto_stop:=false \
+  mock_publish_traj_flags:=false \
   mock_sync_reset_from_gcs_status:=true \
   rc_land_channel:=5 \
   rc_land_threshold:=1800

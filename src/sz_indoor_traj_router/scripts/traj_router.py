@@ -7,22 +7,13 @@ from std_msgs.msg import String, Float64MultiArray, Bool
 from sz_indoor_fsm.srv import JsonCommand, JsonCommandResponse
 from sz_indoor_controller.msg import TrajPoint
 
-
-class TrajRouterNode:
-    """
-    轨迹路由器节点 - 对接 GCS FSM
-    """
-    def __init__(self):
-        rospy.init_node('traj_router', anonymous=True)
+# 单机到多机
+class UAVState:
+    """单架无人机的状态"""
+    def __init__(self, uav_id):
+        self.uav_id = uav_id
         
-        # 参数配置
-        self.takeoff_duration = rospy.get_param("~takeoff_duration", 6.0)
-        self.landing_duration = rospy.get_param("~landing_duration", 5.0)
-        self.target_height = rospy.get_param("~target_height", 1.0)
-        self.default_traj_type = int(rospy.get_param("~traj_type", 1))
-        self.uav_id = rospy.get_param("~uav_id", "/uav1")
-        
-        # 状态定义
+        # 状态
         self.STATE_IDLE = "idle"
         self.STATE_TAKEOFF = "takeoff"
         self.STATE_HOVER = "hover"

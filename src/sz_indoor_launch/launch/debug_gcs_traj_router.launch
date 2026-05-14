@@ -65,6 +65,7 @@
     <arg name="mock_auto_stop" default="false"/>
     <arg name="mock_sync_reset_from_gcs_status" default="true"/>
     <arg name="mock_auto_reset_after_land" default="false"/>
+    <arg name="mock_publish_traj_flags" default="false"/>
     <arg name="mock_prepared_delay" default="1.0"/>
     <arg name="mock_achieve_delay" default="5.0"/>
     <arg name="mock_follow_duration" default="8.0"/>
@@ -143,6 +144,7 @@
         <param name="auto_stop" value="$(arg mock_auto_stop)"/>
         <param name="sync_reset_from_gcs_status" value="$(arg mock_sync_reset_from_gcs_status)"/>
         <param name="auto_reset_after_land" value="$(arg mock_auto_reset_after_land)"/>
+        <param name="publish_traj_flags" value="$(arg mock_publish_traj_flags)"/>
         <param name="prepared_delay" value="$(arg mock_prepared_delay)"/>
         <param name="achieve_delay" value="$(arg mock_achieve_delay)"/>
         <param name="follow_duration" value="$(arg mock_follow_duration)"/>

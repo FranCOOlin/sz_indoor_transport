@@ -68,6 +68,7 @@ class MockMultiUAV:
         self.bridge_trajectory_request = bool(
             rospy.get_param("~bridge_trajectory_request", True)
         )
+        self.publish_traj_flags = bool(rospy.get_param("~publish_traj_flags", False))
         self.auto_prepared = bool(rospy.get_param("~auto_prepared", True))
         self.auto_achieve = bool(rospy.get_param("~auto_achieve", True))
         self.auto_stop = bool(rospy.get_param("~auto_stop", True))
@@ -109,11 +110,12 @@ class MockMultiUAV:
                 Float64MultiArray,
                 queue_size=10,
             )
-            self.flag_pubs[uav_id] = rospy.Publisher(
-                self.flag_topic_template.format(uav_id=uav_id),
-                Bool,
-                queue_size=10,
-            )
+            if self.publish_traj_flags:
+                self.flag_pubs[uav_id] = rospy.Publisher(
+                    self.flag_topic_template.format(uav_id=uav_id),
+                    Bool,
+                    queue_size=10,
+                )
             service_name = self.command_service_template.format(uav_id=uav_id)
             self.command_srvs.append(
                 rospy.Service(
@@ -296,6 +298,8 @@ class MockMultiUAV:
         self.request_pub.publish(bridged)
 
     def _publish_ready_flags(self, force=False):
+        if not self.publish_traj_flags:
+            return
         t = now_sec()
         if not force and t - self.last_flag_time < 1.0 / max(self.flag_rate_hz, 1e-6):
             return
