@@ -1,0 +1,163 @@
+<launch>
+    <!-- UAV 侧协同任务启动文件：先启动控制器系统，再启动本机 UAV FSM。 -->
+
+    <!-- 当前无人机 ID；同时作为 FSM self_id 和 controller uav_id。 -->
+    <arg name="uav_id" default="uav0"/>
+
+    <!-- 当前无人机角色：master / slave。 -->
+    <arg name="role" default="master"/>
+
+    <!-- 主机无人机 ID。slave 也需要知道 master_id，用于和 GCS 配置保持一致。 -->
+    <arg name="master_id" default="uav0"/>
+
+    <!-- 本次实验流程 ID。必须与 GCS 一致。 -->
+    <arg name="run_id" default="coop_lift_test_001"/>
+
+    <!-- 是否启动 sz_indoor_controller 的系统逻辑。需要只跑 FSM 时可设为 false。 -->
+    <arg name="launch_controller" default="true"/>
+
+    <!-- MAVROS 参数。simulation=false 时才启动 PX4 MAVROS。 -->
+    <arg name="fcu_url" default="/dev/ttyUSB0:1000000"/>
+    <arg name="gcs_url" default=""/>
+    <arg name="tgt_system" default="1"/>
+    <arg name="tgt_component" default="1"/>
+    <arg name="mavros_log_output" default="screen"/>
+    <arg name="fcu_protocol" default="v2.0"/>
+    <arg name="respawn_mavros" default="false"/>
+
+    <!-- controller / observer / simu 参数，对应原 sys_20260323.launch。 -->
+    <arg name="simulation" default="false"/>
+    <arg name="controller_file_path" default="$(find sz_indoor_controller)/json/myparams_20260323.json"/>
+    <arg name="controller_param" default="some_value"/>
+    <arg name="observer_param" default="some_value"/>
+    <arg name="controller_rate" default="200"/>
+    <arg name="observer_rate" default="200"/>
+    <arg name="prescaler" default="1"/>
+    <arg name="controller_output" default="screen"/>
+    <arg name="observer_output" default="log"/>
+    <arg name="simu_output" default="screen"/>
+
+    <!-- FSM 起飞目标高度。 -->
+    <arg name="takeoff_height" default="3.0"/>
+    <arg name="takeoff_duration" default="6.0"/>
+    <arg name="takeoff_reached_tolerance" default="0.25"/>
+    <arg name="takeoff_timeout_margin" default="2.0"/>
+    <arg name="land_reset_delay" default="5.0"/>
+
+    <!-- FSM 主循环、健康检查和服务接口参数。 -->
+    <arg name="control_rate_hz" default="30.0"/>
+    <arg name="status_rate_hz" default="5.0"/>
+    <arg name="uav_state_topic" default="/$(arg uav_id)/quadrotor_feedback"/>
+    <arg name="health_min_rate_hz" default="20.0"/>
+    <arg name="health_timeout" default="1.0"/>
+    <arg name="require_attitude_valid" default="false"/>
+    <arg name="traj_router_service" default="/traj_router/command"/>
+    <arg name="gcs_event_service" default="/gcs/fsm/event"/>
+    <arg name="operator_service" default="/$(arg uav_id)/fsm/operator"/>
+    <arg name="uav_command_service_template" default="/{uav_id}/fsm/command"/>
+
+    <!-- UAV 侧可读本机 RC，用于 ABORT；起飞/降落确认通常由 GCS 侧完成。 -->
+    <arg name="rc_in_topic" default="/$(arg uav_id)/mavros/rc/in"/>
+    <arg name="rc_takeoff_channel" default="12"/>
+    <arg name="rc_takeoff_threshold" default="1500"/>
+    <arg name="rc_takeoff_direction" default="above"/>
+    <arg name="rc_land_channel" default="5"/>
+    <arg name="rc_land_threshold" default="1800"/>
+    <arg name="rc_land_direction" default="above"/>
+    <arg name="rc_abort_channel" default="11"/>
+    <arg name="rc_abort_threshold" default="1800"/>
+    <arg name="rc_abort_direction" default="above"/>
+
+    <arg name="enable_keyboard" default="false"/>
+    <arg name="fsm_node_output" default="log"/>
+
+    <group if="$(arg launch_controller)">
+        <!-- 原 sys_20260323.launch 逻辑 1：非仿真模式下，在 /<uav_id> 命名空间启动 MAVROS PX4。 -->
+        <group unless="$(arg simulation)" ns="$(arg uav_id)">
+            <include file="$(find mavros)/launch/px4.launch">
+                <arg name="fcu_url" value="$(arg fcu_url)"/>
+                <arg name="gcs_url" value="$(arg gcs_url)"/>
+                <arg name="tgt_system" value="$(arg tgt_system)"/>
+                <arg name="tgt_component" value="$(arg tgt_component)"/>
+                <arg name="log_output" value="$(arg mavros_log_output)"/>
+                <arg name="fcu_protocol" value="$(arg fcu_protocol)"/>
+                <arg name="respawn_mavros" value="$(arg respawn_mavros)"/>
+            </include>
+        </group>
+
+        <!-- 原 sys_20260323.launch 逻辑 2：启动 controller 节点。 -->
+        <node pkg="sz_indoor_controller"
+              type="controller"
+              name="$(arg uav_id)_controller"
+              output="$(arg controller_output)">
+            <param name="controller_param" value="$(arg controller_param)"/>
+            <param name="simulation" value="$(arg simulation)"/>
+            <param name="uav_id" value="$(arg uav_id)"/>
+            <param name="file_path" value="$(arg controller_file_path)"/>
+            <param name="controller_rate" value="$(arg controller_rate)"/>
+            <param name="prescaler" value="$(arg prescaler)"/>
+        </node>
+
+        <!-- 原 sys_20260323.launch 逻辑 3：启动 observer 节点。 -->
+        <node pkg="sz_indoor_controller"
+              type="observer"
+              name="$(arg uav_id)_observer"
+              output="$(arg observer_output)">
+            <param name="observer_param" value="$(arg observer_param)"/>
+            <param name="uav_id" value="$(arg uav_id)"/>
+            <param name="simulation" value="$(arg simulation)"/>
+            <param name="file_path" value="$(arg controller_file_path)"/>
+            <param name="observer_rate" value="$(arg observer_rate)"/>
+        </node>
+
+        <!-- 原 sys_20260323.launch 逻辑 4：仿真模式下启动 simuQSLS.py，替代真实 MAVROS 输入。 -->
+        <group if="$(arg simulation)">
+            <node pkg="sz_indoor_controller"
+                  type="simuQSLS.py"
+                  name="simu"
+                  output="$(arg simu_output)">
+                <param name="uav_id" value="$(arg uav_id)"/>
+            </node>
+        </group>
+    </group>
+
+    <include file="$(find sz_indoor_fsm)/launch/coop_fsm.launch">
+        <arg name="role" value="$(arg role)"/>
+        <arg name="self_id" value="$(arg uav_id)"/>
+        <arg name="master_id" value="$(arg master_id)"/>
+        <arg name="run_id" value="$(arg run_id)"/>
+
+        <arg name="control_rate_hz" value="$(arg control_rate_hz)"/>
+        <arg name="status_rate_hz" value="$(arg status_rate_hz)"/>
+        <arg name="takeoff_height" value="$(arg takeoff_height)"/>
+        <arg name="takeoff_duration" value="$(arg takeoff_duration)"/>
+        <arg name="takeoff_reached_tolerance" value="$(arg takeoff_reached_tolerance)"/>
+        <arg name="takeoff_timeout_margin" value="$(arg takeoff_timeout_margin)"/>
+        <arg name="land_reset_delay" value="$(arg land_reset_delay)"/>
+
+        <arg name="uav_state_topic" value="$(arg uav_state_topic)"/>
+        <arg name="health_min_rate_hz" value="$(arg health_min_rate_hz)"/>
+        <arg name="health_timeout" value="$(arg health_timeout)"/>
+        <arg name="require_attitude_valid" value="$(arg require_attitude_valid)"/>
+
+        <arg name="traj_router_service" value="$(arg traj_router_service)"/>
+        <arg name="gcs_event_service" value="$(arg gcs_event_service)"/>
+        <arg name="operator_service" value="$(arg operator_service)"/>
+        <arg name="uav_command_service_template" value="$(arg uav_command_service_template)"/>
+
+        <arg name="rc_in_topic" value="$(arg rc_in_topic)"/>
+        <arg name="rc_takeoff_channel" value="$(arg rc_takeoff_channel)"/>
+        <arg name="rc_takeoff_threshold" value="$(arg rc_takeoff_threshold)"/>
+        <arg name="rc_takeoff_direction" value="$(arg rc_takeoff_direction)"/>
+        <arg name="rc_land_channel" value="$(arg rc_land_channel)"/>
+        <arg name="rc_land_threshold" value="$(arg rc_land_threshold)"/>
+        <arg name="rc_land_direction" value="$(arg rc_land_direction)"/>
+        <arg name="rc_abort_channel" value="$(arg rc_abort_channel)"/>
+        <arg name="rc_abort_threshold" value="$(arg rc_abort_threshold)"/>
+        <arg name="rc_abort_direction" value="$(arg rc_abort_direction)"/>
+
+        <arg name="enable_keyboard" value="$(arg enable_keyboard)"/>
+        <arg name="node_output" value="$(arg fsm_node_output)"/>
+        <arg name="launch_monitor" value="false"/>
+    </include>
+</launch>
