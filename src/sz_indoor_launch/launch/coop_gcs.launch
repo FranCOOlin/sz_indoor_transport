@@ -1,0 +1,87 @@
+<launch>
+    <!-- 地面站侧协同任务启动文件：启动 GCS FSM，并可选启动 Rich 操作台。 -->
+
+    <!-- GCS 节点 ID，通常保持 gcs。 -->
+    <arg name="self_id" default="gcs"/>
+
+    <!-- 主机无人机 ID。GCS 默认从 /$(arg master_id)/mavros/rc/in 读取遥控器输入。 -->
+    <arg name="master_id" default="uav0"/>
+
+    <!-- 参与本轮任务的 UAV 列表，逗号分隔。GCS 会等待这些 UAV 的 prepared/achieve。 -->
+    <arg name="participants" default="uav0,uav1,uav2"/>
+
+    <!-- 本次实验流程 ID。所有 GCS/UAV FSM 必须一致。 -->
+    <arg name="run_id" default="coop_lift_test_001"/>
+
+    <!-- FSM 主循环和状态发布频率。 -->
+    <arg name="control_rate_hz" default="30.0"/>
+    <arg name="status_rate_hz" default="5.0"/>
+
+    <!-- 起飞/降落相关参数。takeoff_duration 也会发给 traj_router。 -->
+    <arg name="takeoff_height" default="3.0"/>
+    <arg name="takeoff_duration" default="6.0"/>
+    <arg name="takeoff_reached_tolerance" default="0.25"/>
+    <arg name="takeoff_timeout_margin" default="2.0"/>
+    <arg name="land_reset_delay" default="5.0"/>
+
+    <!-- 服务接口。 -->
+    <arg name="traj_router_service" default="/traj_router/command"/>
+    <arg name="gcs_event_service" default="/gcs/fsm/event"/>
+    <arg name="operator_service" default="/gcs/fsm/operator"/>
+    <arg name="uav_command_service_template" default="/{uav_id}/fsm/command"/>
+
+    <!-- GCS 侧遥控器输入，默认读 master UAV 的 MAVROS RCIn。 -->
+    <arg name="rc_in_topic" default="/$(arg master_id)/mavros/rc/in"/>
+    <arg name="rc_takeoff_channel" default="12"/>
+    <arg name="rc_takeoff_threshold" default="1500"/>
+    <arg name="rc_takeoff_direction" default="above"/>
+    <arg name="rc_land_channel" default="5"/>
+    <arg name="rc_land_threshold" default="1800"/>
+    <arg name="rc_land_direction" default="above"/>
+    <arg name="rc_abort_channel" default="11"/>
+    <arg name="rc_abort_threshold" default="1800"/>
+    <arg name="rc_abort_direction" default="above"/>
+
+    <!-- Rich 操作台启用时，建议 FSM 输出到 log，避免刷屏污染界面。 -->
+    <arg name="enable_keyboard" default="false"/>
+    <arg name="node_output" default="log"/>
+    <arg name="launch_monitor" default="true"/>
+    <arg name="monitor_screen" default="true"/>
+
+    <include file="$(find sz_indoor_fsm)/launch/coop_fsm.launch">
+        <arg name="role" value="gcs"/>
+        <arg name="self_id" value="$(arg self_id)"/>
+        <arg name="master_id" value="$(arg master_id)"/>
+        <arg name="participants" value="$(arg participants)"/>
+        <arg name="run_id" value="$(arg run_id)"/>
+
+        <arg name="control_rate_hz" value="$(arg control_rate_hz)"/>
+        <arg name="status_rate_hz" value="$(arg status_rate_hz)"/>
+        <arg name="takeoff_height" value="$(arg takeoff_height)"/>
+        <arg name="takeoff_duration" value="$(arg takeoff_duration)"/>
+        <arg name="takeoff_reached_tolerance" value="$(arg takeoff_reached_tolerance)"/>
+        <arg name="takeoff_timeout_margin" value="$(arg takeoff_timeout_margin)"/>
+        <arg name="land_reset_delay" value="$(arg land_reset_delay)"/>
+
+        <arg name="traj_router_service" value="$(arg traj_router_service)"/>
+        <arg name="gcs_event_service" value="$(arg gcs_event_service)"/>
+        <arg name="operator_service" value="$(arg operator_service)"/>
+        <arg name="uav_command_service_template" value="$(arg uav_command_service_template)"/>
+
+        <arg name="rc_in_topic" value="$(arg rc_in_topic)"/>
+        <arg name="rc_takeoff_channel" value="$(arg rc_takeoff_channel)"/>
+        <arg name="rc_takeoff_threshold" value="$(arg rc_takeoff_threshold)"/>
+        <arg name="rc_takeoff_direction" value="$(arg rc_takeoff_direction)"/>
+        <arg name="rc_land_channel" value="$(arg rc_land_channel)"/>
+        <arg name="rc_land_threshold" value="$(arg rc_land_threshold)"/>
+        <arg name="rc_land_direction" value="$(arg rc_land_direction)"/>
+        <arg name="rc_abort_channel" value="$(arg rc_abort_channel)"/>
+        <arg name="rc_abort_threshold" value="$(arg rc_abort_threshold)"/>
+        <arg name="rc_abort_direction" value="$(arg rc_abort_direction)"/>
+
+        <arg name="enable_keyboard" value="$(arg enable_keyboard)"/>
+        <arg name="node_output" value="$(arg node_output)"/>
+        <arg name="launch_monitor" value="$(arg launch_monitor)"/>
+        <arg name="monitor_screen" value="$(arg monitor_screen)"/>
+    </include>
+</launch>
