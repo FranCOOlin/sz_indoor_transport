@@ -7,7 +7,7 @@ from std_msgs.msg import String, Float64MultiArray, Bool
 from sz_indoor_fsm.srv import JsonCommand, JsonCommandResponse
 from sz_indoor_controller.msg import TrajPoint
 
-
+# 单机到多机
 class UAVState:
     """单架无人机的状态"""
     def __init__(self, uav_id):
