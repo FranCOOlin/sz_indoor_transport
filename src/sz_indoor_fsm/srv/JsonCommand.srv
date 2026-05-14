@@ -1,0 +1,15 @@
+# Generic JSON command service used by the cooperative FSM.
+#
+# Request:
+#   json: a JSON object encoded as string. Common fields:
+#     cmd / event : command or event name
+#     run_id      : experiment id used to reject stale events
+#     source      : sender id
+#     stamp       : sender timestamp in seconds
+string json
+---
+# Response:
+#   success: true if the receiver accepted the command/event
+#   message: human-readable reason or diagnostic text
+bool success
+string message

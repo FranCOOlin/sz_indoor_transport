@@ -46,11 +46,6 @@
         <param name="file_path" value="$(arg file_path)" />
         <param name="observer_rate" value="$(arg observer_rate)" />
     </node>
-    <!-- 启动 Takeoff 节点 -->
-    <node pkg="sz_indoor_controller" type="takeoff" name="$(arg uav_id)_takeoff" output="screen">
-        <param name="uav_id" value="$(arg uav_id)" />
-        <param name="simulation" value="$(arg simulation)" />
-    </node>
     <!-- 启动 Simu Python 脚本 -->
     <group if="$(arg simulation)">
         <node pkg="sz_indoor_controller" type="simuQSLS.py" name="simu" output="screen">

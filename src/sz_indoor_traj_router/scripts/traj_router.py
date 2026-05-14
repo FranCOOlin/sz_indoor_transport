@@ -5,14 +5,13 @@ import json
 import rospy
 from std_msgs.msg import String, Float64MultiArray, Bool
 from sz_indoor_fsm.srv import JsonCommand, JsonCommandResponse
-from test_controller.msg import TrajPoint
+from sz_indoor_controller.msg import TrajPoint
 
 
 class TrajRouterNode:
     """
     轨迹路由器节点 - 对接 GCS FSM
     """
-    
     def __init__(self):
         rospy.init_node('traj_router', anonymous=True)
         
