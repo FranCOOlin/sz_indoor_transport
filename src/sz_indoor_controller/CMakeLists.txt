@@ -18,7 +18,6 @@ find_package(catkin REQUIRED COMPONENTS
 ## System dependencies are found with CMake's conventions
 find_package(Boost REQUIRED COMPONENTS system)
 
-
 ## Uncomment this if the package has a setup.py. This macro ensures
 ## modules and global scripts declared therein get installed
 ## See http://ros.org/doc/api/catkin/html/user_guide/setup_dot_py.html
@@ -53,6 +52,8 @@ add_message_files(
   FILES
   UAVState.msg
   UAVCommand.msg
+  QSLSState.msg
+  TrajPoint.msg
   Float64MultiArrayWithHeader.msg
 )
 
@@ -107,7 +108,7 @@ generate_messages(
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
  INCLUDE_DIRS include
-#  LIBRARIES test_controller
+#  LIBRARIES sz_indoor_controller
 #  CATKIN_DEPENDS geometry_msgs roscpp rospy std_msgs
 #  DEPENDS system_lib
 CATKIN_DEPENDS message_runtime
@@ -120,7 +121,7 @@ CATKIN_DEPENDS message_runtime
 ## Specify additional locations of header files
 ## Your package locations should be listed before other locations
 include_directories(
-include
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${catkin_INCLUDE_DIRS}
   ${Boost_INCLUDE_DIRS}
 )
@@ -129,6 +130,25 @@ include
 # add_library(integrator_lib
 #   src/integrator.cpp
 # )
+
+
+# add_library(   ##用来手动链接.hpp和.cpp文件
+#         dev_gpio           ##自定义的链接库名，后面用来识别
+#         include/sz_indoor_controller/triple_adc/dev_gpio.cpp     ##.cpp的路径
+#         )
+# add_library(   ##用来手动链接.hpp和.cpp文件
+#         dev_hardware_spi           ##自定义的链接库名，后面用来识别
+#         include/sz_indoor_controller/triple_adc/dev_hardware_spi.cpp     ##.cpp的路径
+#         )
+# add_library(   ##用来手动链接.hpp和.cpp文件
+#         dev_config           ##自定义的链接库名，后面用来识别
+#         include/sz_indoor_controller/triple_adc/dev_config.cpp     ##.cpp的路径
+#         )
+# add_library(   ##用来手动链接.hpp和.cpp文件
+#         ADS1263           ##自定义的链接库名，后面用来识别
+#         include/sz_indoor_controller/triple_adc/ADS1263.cpp     ##.cpp的路径
+#         )
+
 
 ## Add cmake target dependencies of the library
 ## as an example, code may need to be generated before libraries
@@ -141,19 +161,31 @@ include
 add_executable(controller_old src/controller_old.cpp)
 add_executable(controller src/controller.cpp)
 add_executable(estimator src/estimator.cpp)
-add_executable(simulator src/simu.cpp)
-add_executable(odeint_example src/odeint_example.cpp src/integrator.cpp)
+add_executable(odeint_example src/odeint_example.cpp)
 add_executable(sin_publish src/sin_publisher.cpp)
 add_executable(observer src/observer.cpp)
+add_executable(check_controller src/check_controller.cpp)
+add_executable(check_observer src/check_observer.cpp)
+# add_executable(triple_adc_read src/triple_adc_read.cpp)
+# add_executable(uart_triple_adc src/uart_triple_adc.cpp)
+add_executable(qsls_state_pub src/qsls_state_pub.cpp)
+# add_executable(force_pub src/force_pub.cpp)
+add_executable(takeoff src/takeoff.cpp)
 
 # Generate custom message before compiling source code
 add_dependencies(controller_old ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 add_dependencies(controller ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 add_dependencies(estimator ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
-add_dependencies(simulator ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 add_dependencies(odeint_example ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 add_dependencies(sin_publish ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 add_dependencies(observer ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+add_dependencies(check_controller ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+add_dependencies(check_observer ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+# add_dependencies(triple_adc_read ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+# add_dependencies(uart_triple_adc ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+add_dependencies(qsls_state_pub ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+# add_dependencies(force_pub ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+add_dependencies(takeoff ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
 ## target back to the shorter version for ease of user use
@@ -179,13 +211,9 @@ target_link_libraries(
   ${catkin_LIBRARIES}
 )
 target_link_libraries(
-  simulator
-  ${catkin_LIBRARIES}
-)
-target_link_libraries(
   odeint_example
   ${catkin_LIBRARIES}
-  ${Boost_INCLUDE_DIRS}
+  ${Boost_LIBRARIES}
 )
 target_link_libraries(
   sin_publish
@@ -195,10 +223,41 @@ target_link_libraries(
   observer
   ${catkin_LIBRARIES}
 )
+target_link_libraries(
+  check_controller
+  ${catkin_LIBRARIES}
+)
+target_link_libraries(
+  check_observer
+  ${catkin_LIBRARIES}
+)
 # target_link_libraries(
-#   integrator_lib
+#   triple_adc_read
+#   ADS1263
+#   dev_gpio
+#   dev_hardware_spi
+#   dev_config
+#   ${catkin_LIBRARIES}
+#   -lwiringPi
+# )
+# target_link_libraries(
+#   uart_triple_adc
+#   ${catkin_LIBRARIES}
+#   -lwiringPi
+# )
+target_link_libraries(
+  qsls_state_pub
+  ${catkin_LIBRARIES}
+)
+# target_link_libraries(
+#   force_pub
+#   -lwiringPi
 #   ${catkin_LIBRARIES}
 # )
+target_link_libraries(
+  takeoff
+  ${catkin_LIBRARIES}
+)
 #############
 ## Install ##
 #############
@@ -209,8 +268,12 @@ target_link_libraries(
 ## Mark executable scripts (Python etc.) for installation
 ## in contrast to setup.py, you can choose the destination
 catkin_install_python(PROGRAMS
+  scripts/simuQSLS.py
   scripts/simu.py
   scripts/rebootFC.py
+  scripts/simu_topic_save.py
+  scripts/calibrate.py
+  scripts/sensor_check.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
@@ -247,7 +310,7 @@ catkin_install_python(PROGRAMS
 #############
 
 ## Add gtest based cpp test target and link libraries
-# catkin_add_gtest(${PROJECT_NAME}-test test/test_test_controller.cpp)
+# catkin_add_gtest(${PROJECT_NAME}-test test/test_sz_indoor_controller.cpp)
 # if(TARGET ${PROJECT_NAME}-test)
 #   target_link_libraries(${PROJECT_NAME}-test ${PROJECT_NAME})
 # endif()

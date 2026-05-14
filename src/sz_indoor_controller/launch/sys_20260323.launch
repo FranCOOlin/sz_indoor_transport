@@ -6,11 +6,11 @@
     <arg name="log_output" default="screen" />
     <arg name="fcu_protocol" default="v2.0" />
     <arg name="respawn_mavros" default="false" />
-
     <!-- 启动 PX4 -->
-    <arg name="uav_id" default="uav173"/>
+    <arg name="uav_id" default="uav171"/>
+    <arg name="height" default="1.0"/>
     <arg name="simulation" default="false"/>
-    <arg name="file_path" default="$(find sz_indoor_controller)/json/myparams.json"/>
+    <arg name="file_path" default="$(find sz_indoor_controller)/json/myparams_20260323.json"/>
     <arg name="controller_rate" default="200"/>
     <arg name="observer_rate" default="200"/>
     <arg name="prescaler" default="1"/>
@@ -36,7 +36,13 @@
         <param name="controller_rate" value="$(arg controller_rate)" />
         <param name="prescaler" value="$(arg prescaler)" />
     </node>
-
+    
+    <!-- 启动 Takeoff 节点 -->
+    <node pkg="sz_indoor_controller" type="takeoff" name="$(arg uav_id)_takeoff" output="screen">
+        <param name="uav_id" value="$(arg uav_id)" />
+        <param name="height" value="$(arg height)" />
+        <param name="simulation" value="$(arg simulation)" />
+    </node>
 
     <!-- 启动 Observer 节点 -->
     <node pkg="sz_indoor_controller" type="observer" name="$(arg uav_id)_observer" output="log">
@@ -46,11 +52,7 @@
         <param name="file_path" value="$(arg file_path)" />
         <param name="observer_rate" value="$(arg observer_rate)" />
     </node>
-    <!-- 启动 Takeoff 节点 -->
-    <node pkg="sz_indoor_controller" type="takeoff" name="$(arg uav_id)_takeoff" output="screen">
-        <param name="uav_id" value="$(arg uav_id)" />
-        <param name="simulation" value="$(arg simulation)" />
-    </node>
+
     <!-- 启动 Simu Python 脚本 -->
     <group if="$(arg simulation)">
         <node pkg="sz_indoor_controller" type="simuQSLS.py" name="simu" output="screen">

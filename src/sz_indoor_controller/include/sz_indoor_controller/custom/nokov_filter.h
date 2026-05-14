@@ -1,12 +1,12 @@
-#ifndef OBSERVER_MY_OBSERVER_H
-#define OBSERVER_MY_OBSERVER_H
+#ifndef OBSERVER_NOKOV_FILTER_H
+#define OBSERVER_NOKOV_FILTER_H
 
 #include "sz_indoor_controller/observer/observer.h"
 #include "sz_indoor_controller/common/integrator.hpp"
-#include "sz_indoor_controller/custom/myparams.h"
-#include "sz_indoor_controller/custom/mystate.h"
-#include "sz_indoor_controller/custom/mymeasurement.h"
-#include "sz_indoor_controller/custom/mycontrol_input.h"
+#include "sz_indoor_controller/custom/system_params.h"
+#include "sz_indoor_controller/custom/quadrotor_state.h"
+#include "sz_indoor_controller/custom/nokov_with_force.h"
+#include "sz_indoor_controller/custom/quadrotor_control_input.h"
 #include <boost/numeric/odeint.hpp>
 #include <eigen3/Eigen/Dense>
 #include <deque>
@@ -15,12 +15,12 @@ namespace observer {
 
 using SystemDynamics = std::function<void(const state_type&, state_type&, double)>;
 
-class MyObserver : public Observer {
+class NokovFilter : public Observer {
 public:
-    common::MyParams &params;
-    common::MyMeasurement &measurement;
-    common::MyState &state;
-    common::MyControlInput &control_input;
+    common::SystemParams &params;
+    common::NokovWithForce &measurement;
+    common::QuadrotorState &state;
+    common::QuadrotorControlInput &control_input;
     common::Integrator<boost::numeric::odeint::runge_kutta_fehlberg78<state_type>> integrator;
     Eigen::Vector3d p_old;          // 上次的位置
     Eigen::Matrix3d R_old; // 上次的旋转矩阵
@@ -32,8 +32,8 @@ public:
     // 使用 Boost ODEint 积分器类型
 
     // 构造函数：接收 Params、State 和 Measurement 的引用
-    MyObserver(common::MyParams &_params, common::MyState &_state, common::MyMeasurement &_measurement, common::MyControlInput &_control_input, bool _simu)
-        : params(_params), state(_state), measurement(_measurement),control_input(_control_input), integrator(std::bind(&MyObserver::f, this,std::placeholders::_1,std::placeholders::_2,std::placeholders::_3,std::ref(params), std::ref(control_input)), 0.01),simu(_simu), p_old(Eigen::Vector3d::Zero()), R_old(Eigen::Matrix3d::Identity()), vi_old(Eigen::Vector3d::Zero()), omega_old(Eigen::Vector3d::Zero()){}
+    NokovFilter(common::SystemParams &_params, common::QuadrotorState &_state, common::NokovWithForce &_measurement, common::QuadrotorControlInput &_control_input, bool _simu)
+        : params(_params), state(_state), measurement(_measurement),control_input(_control_input), integrator(std::bind(&NokovFilter::f, this,std::placeholders::_1,std::placeholders::_2,std::placeholders::_3,std::ref(params), std::ref(control_input)), 0.01),simu(_simu), p_old(Eigen::Vector3d::Zero()), R_old(Eigen::Matrix3d::Identity()), vi_old(Eigen::Vector3d::Zero()), omega_old(Eigen::Vector3d::Zero()){}
 
     // 中值计算函数（适用于 Vector3d）
     Eigen::Vector3d calculateMedian(std::deque<Eigen::Vector3d>& window) {
@@ -71,24 +71,24 @@ public:
     void calculateState(Eigen::Vector3d& p, Eigen::Vector3d& vi, Eigen::Vector3d& vb, Eigen::Matrix3d& R, Eigen::Vector3d& omega,
         Eigen::Vector3d& p_current, Eigen::Quaterniond& q_current, Eigen::Vector3d& p_old, Eigen::Matrix3d R_old, Eigen::Vector3d vi_old, Eigen::Vector3d omega_old, double last_time, bool zDown = false) {
         // 固定旋转矩阵 R1
-        Eigen::Matrix3d R1;
-        R1 << 1, 0,  0,
-            0, -1, 0,
-            0,  0, -1;
+        // Eigen::Matrix3d R1;
+        // R1 << 1, 0,  0,
+        //     0, -1, 0,
+        //     0,  0, -1;
 
-        // 当前旋转矩阵
-        if (zDown||simu)
-        {
+        // // 当前旋转矩阵
+        // if (zDown||simu)
+        // {
             R = q2R(q_current);
             p = p_current;
-        }
-        else{
-            R = R1 * q2R(q_current) * R1.transpose();
-            p = R1 * p_current;
-            p_current = p;
-            Eigen::Quaterniond q(R);
-            q_current = q;
-        }
+        // }
+        // else{
+        //     R = R1 * q2R(q_current) * R1.transpose();
+        //     p = R1 * p_current;
+        //     p_current = p;
+        //     Eigen::Quaterniond q(R);
+        //     q_current = q;
+        // }
         
 
         // 时间增量
@@ -125,7 +125,7 @@ public:
     }
 
 
-    void f(const state_type &x, state_type &dxdt, double t, common::MyParams &params,const common::MyControlInput &control_input) {
+    void f(const state_type &x, state_type &dxdt, double t, common::SystemParams &params,const common::QuadrotorControlInput &control_input) {
         // 通过状态方程计算 dx/dt
         dxdt = x;
         // your code here
@@ -157,12 +157,12 @@ public:
         state.p = position_median;
         state.vi = velocity_median;
         state.vb = vb;
-        state.q = Eigen::Vector4d(measurement.attitude.w(), measurement.attitude.x(), measurement.attitude.y(), measurement.attitude.z());
+        state.q = measurement.attitude;
         state.R = R;
         state.omega = omega;
         state.euler = R.eulerAngles(2, 1, 0);
         // ROS_INFO("Observer updated: vel = [%f, %f, %f]", state.vi(0), state.vi(1), state.vi(2));
-        ROS_INFO("Observer updated: pos = [%f, %f, %f]", state.p(0), state.p(1), state.p(2));
+        // ROS_INFO("Observer updated: pos = [%f, %f, %f]", state.p(0), state.p(1), state.p(2));
         // 从std::vector<double>转换为state
         // state.p = Eigen::VectorXd::Map(int_vec.data(), 3);
         // state.q = Eigen::VectorXd::Map(int_vec.data()+3, 4);

@@ -1,26 +1,26 @@
-#ifndef MY_STATE_H
-#define MY_STATE_H
+#ifndef CUSTOM_QUADROTOR_STATE_H
+#define CUSTOM_QUADROTOR_STATE_H
 
 #include "sz_indoor_controller/common/state.h"
 #include <eigen3/Eigen/Dense>
 
 namespace common {
 
-class MyState : public State {
+class QuadrotorState : public State {
 public:
     Eigen::Vector3d p;     // 位置向量
     Eigen::Vector3d vi;     // Inertial frame velocity
     Eigen::Vector3d vb;     // Body frame velocity
-    Eigen::Vector4d q;     // 四元数
+    Eigen::Quaterniond q;     // 四元数
     Eigen::Vector3d euler; // 欧拉角
     Eigen::Matrix3d R;     // 旋转矩阵
     Eigen::Vector3d omega; // 角速度
 
-    MyState()
+    QuadrotorState()
         : p(Eigen::Vector3d::Zero()),
         vi(Eigen::Vector3d::Zero()),
         vb(Eigen::Vector3d::Zero()),
-        q(Eigen::Vector4d::Zero()),
+        q(Eigen::Quaterniond::Identity()),
         euler(Eigen::Vector3d::Zero()),
         R(Eigen::Matrix3d::Identity()),
         omega(Eigen::Vector3d::Zero())
@@ -31,7 +31,7 @@ public:
     void setState(  Eigen::Vector3d _p,
                     Eigen::Vector3d _vi,
                     Eigen::Vector3d _vb,
-                    Eigen::Vector4d _q,
+                    Eigen::Quaterniond _q,
                     Eigen::Matrix3d _R,
                     Eigen::Vector3d _euler,
                     Eigen::Vector3d _omega)

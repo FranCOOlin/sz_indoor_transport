@@ -1,0 +1,36 @@
+<launch>
+    <arg name="fcu_url" default="/dev/ttyUSB0:1000000" />
+    <arg name="gcs_url" default="" />
+    <arg name="tgt_system" default="1" />
+    <arg name="tgt_component" default="1" />
+    <arg name="log_output" default="screen" />
+    <arg name="fcu_protocol" default="v2.0" />
+    <arg name="respawn_mavros" default="false" />
+    <!-- 启动 PX4 -->
+    <arg name="uav_id" default="X250"/>
+    <arg name="simulation" default="false"/>
+    <arg name="file_path" default="$(find sz_indoor_controller)/json/myparams.json"/>
+    <arg name="controller_rate" default="200"/>
+    <arg name="observer_rate" default="200"/>
+    <arg name="prescaler" default="1"/>
+
+
+    <node pkg="sz_indoor_controller" type="force_pub" name="force_pub" output="log">
+        <param name="observer_param" value="some_value" />
+        <param name="uav_id" value="$(arg uav_id)" />
+        <param name="simulation" value="$(arg simulation)" />
+        <param name="file_path" value="$(arg file_path)" />
+        <param name="observer_rate" value="$(arg observer_rate)" />
+    </node>
+    <!-- 启动 Observer 节点 -->
+    <node pkg="sz_indoor_controller" type="observer" name="observer" output="log">
+        <param name="observer_param" value="some_value" />
+        <param name="uav_id" value="$(arg uav_id)" />
+        <param name="simulation" value="$(arg simulation)" />
+        <param name="file_path" value="$(arg file_path)" />
+        <param name="observer_rate" value="$(arg observer_rate)" />
+    </node>
+
+
+
+</launch>
