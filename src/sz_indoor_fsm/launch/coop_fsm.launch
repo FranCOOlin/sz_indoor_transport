@@ -26,6 +26,9 @@
     <!-- 起飞轨迹持续时间，GCS 发给 traj_router；UAV 也用它作为起飞完成超时判据的一部分。 -->
     <arg name="takeoff_duration" default="6.0"/>
 
+    <!-- 主轨迹类型编号。GCS 进入 TRAJ_FOLLOWING 时会把 traj_type 发给 traj_router。 -->
+    <arg name="traj_type" default="1"/>
+
     <!-- UAV 判断已达到起飞高度的绝对误差阈值，单位 m。 -->
     <arg name="takeoff_reached_tolerance" default="0.25"/>
 
@@ -35,16 +38,16 @@
     <!-- LAND 状态保持多久后复位回 PREPARE。实飞时可按落地检测逻辑再替换。 -->
     <arg name="land_reset_delay" default="5.0"/>
 
-    <!-- UAVState 输入话题。无人机侧订阅 sz_indoor_controller/UAVState，用于健康检查和高度判据。 -->
-    <arg name="uav_state_topic" default="/$(arg self_id)/quadrotor_feedback"/>
+    <!-- observer 状态输入话题。格式：[px,py,pz,vx,vy,vz,qw,qx,qy,qz]。 -->
+    <arg name="uav_state_topic" default="/$(arg self_id)/quadrotor_state"/>
 
-    <!-- UAVState 最低频率要求，低于该值 UAV 不会上报 prepared。 -->
+    <!-- quadrotor_state 最低频率要求，低于该值 UAV 不会上报 prepared。 -->
     <arg name="health_min_rate_hz" default="20.0"/>
 
-    <!-- UAVState 最新消息超时时间，超过该时间认为状态不新鲜。 -->
+    <!-- quadrotor_state 最新消息超时时间，超过该时间认为状态不新鲜。 -->
     <arg name="health_timeout" default="1.0"/>
 
-    <!-- 是否检查 UAVState.attitude 四元数范数。仿真脚本可能不填姿态，所以默认 false。 -->
+    <!-- 是否检查 quadrotor_state 中姿态四元数范数。 -->
     <arg name="require_attitude_valid" default="false"/>
 
     <!-- 中央轨迹路由服务。GCS 会向它发送 takeoff/traj_following/land/abort JSON。 -->
@@ -117,6 +120,7 @@
 
         <param name="takeoff_height" value="$(arg takeoff_height)"/>
         <param name="takeoff_duration" value="$(arg takeoff_duration)"/>
+        <param name="traj_type" value="$(arg traj_type)"/>
         <param name="takeoff_reached_tolerance" value="$(arg takeoff_reached_tolerance)"/>
         <param name="takeoff_timeout_margin" value="$(arg takeoff_timeout_margin)"/>
         <param name="land_reset_delay" value="$(arg land_reset_delay)"/>

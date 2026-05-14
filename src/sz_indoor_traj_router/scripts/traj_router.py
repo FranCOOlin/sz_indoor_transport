@@ -19,6 +19,7 @@ class TrajRouterNode:
         self.takeoff_duration = rospy.get_param("~takeoff_duration", 6.0)
         self.landing_duration = rospy.get_param("~landing_duration", 5.0)
         self.target_height = rospy.get_param("~target_height", 1.0)
+        self.default_traj_type = int(rospy.get_param("~traj_type", 1))
         self.uav_id = rospy.get_param("~uav_id", "/uav1")
         
         # 状态定义
@@ -113,7 +114,10 @@ class TrajRouterNode:
     
     def handle_traj_following(self, payload):
         if self.current_state == self.STATE_HOVER:
-            self.request_trajectory_from_downstream("main_trajectory")
+            traj_type = int(payload.get("traj_type", self.default_traj_type))
+            if traj_type <= 0:
+                return JsonCommandResponse(False, "traj_type must be positive")
+            self.request_trajectory_from_downstream(f"trajectory{traj_type}")
             return JsonCommandResponse(True, "traj_following accepted")
         else:
             return JsonCommandResponse(False, f"cannot start from {self.current_state}")

@@ -1,58 +1,153 @@
 <launch>
     <!-- GCS + traj_router + trajectory_node 联调：用 mock_multi_uav 模拟多机端。 -->
 
-    <!-- trajectory_node 当前源码硬编码 uav170/uav171/uav173/uav174，因此默认用这 4 台。 -->
-    <arg name="participants" default="uav170,uav171,uav173,uav174"/>
-    <arg name="master_id" default="uav170"/>
+    <!-- GCS / FSM 参数。mock 默认发布 /uav1..4/quadrotor_state。 -->
+    <arg name="self_id" default="gcs"/>
+    <arg name="participants" default="uav1,uav2,uav3,uav4"/>
+    <arg name="master_id" default="uav1"/>
     <arg name="run_id" default="coop_lift_test_001"/>
+    <arg name="control_rate_hz" default="30.0"/>
+    <arg name="status_rate_hz" default="5.0"/>
 
+    <!-- 起飞/降落参数。 -->
     <arg name="takeoff_height" default="3.0"/>
     <arg name="takeoff_duration" default="6.0"/>
+    <arg name="traj_type" default="1"/>
+    <arg name="takeoff_reached_tolerance" default="0.25"/>
+    <arg name="takeoff_timeout_margin" default="2.0"/>
     <arg name="land_reset_delay" default="5.0"/>
-    <arg name="trajectory_omega" default="0.3"/>
 
-    <!-- 调试时默认启动完整 GCS 侧链路和 Rich 操作台。 -->
+    <!-- Service 参数。 -->
+    <arg name="traj_router_service" default="/traj_router/command"/>
+    <arg name="gcs_event_service" default="/gcs/fsm/event"/>
+    <arg name="operator_service" default="/gcs/fsm/operator"/>
+    <arg name="uav_command_service_template" default="/{uav_id}/fsm/command"/>
+
+    <!-- GCS 键盘/RC 输入参数。轨迹运行中触发 land 后，会直接给 traj_router 和 UAV 发送 land。 -->
+    <arg name="rc_in_topic" default="/$(arg master_id)/mavros/rc/in"/>
+    <arg name="rc_takeoff_channel" default="12"/>
+    <arg name="rc_takeoff_threshold" default="1500"/>
+    <arg name="rc_takeoff_direction" default="above"/>
+    <arg name="rc_land_channel" default="5"/>
+    <arg name="rc_land_threshold" default="1800"/>
+    <arg name="rc_land_direction" default="above"/>
+    <arg name="rc_abort_channel" default="11"/>
+    <arg name="rc_abort_threshold" default="1800"/>
+    <arg name="rc_abort_direction" default="above"/>
+    <arg name="enable_keyboard" default="false"/>
+
+    <!-- 节点启动与输出参数。 -->
+    <arg name="node_output" default="log"/>
     <arg name="launch_monitor" default="true"/>
+    <arg name="monitor_screen" default="true"/>
     <arg name="launch_traj_router" default="true"/>
     <arg name="launch_trajectory_node" default="true"/>
+    <arg name="traj_router_output" default="screen"/>
+    <arg name="trajectory_node_output" default="screen"/>
+    <arg name="mock_output" default="screen"/>
 
-    <!-- mock 行为参数。 -->
-    <arg name="mock_publish_rate_hz" default="50.0"/>
+    <!-- traj_router / trajectory_node 参数。 -->
+    <arg name="trajectory_omega" default="0.3"/>
+    <arg name="traj_router_uav_id" default="/$(arg master_id)"/>
+    <arg name="traj_router_landing_duration" default="5.0"/>
+
+    <!-- mock_multi_uav 接口参数。 -->
+    <arg name="mock_gcs_event_service" default="$(arg gcs_event_service)"/>
+    <arg name="mock_gcs_status_topic" default="/$(arg self_id)/fsm/status"/>
+    <arg name="mock_command_service_template" default="$(arg uav_command_service_template)"/>
+    <arg name="mock_state_topic_template" default="/{uav_id}/quadrotor_state"/>
+    <arg name="mock_flag_topic_template" default="/{uav_id}/traj_generation_flag"/>
+    <arg name="mock_trajectory_request_topic" default="/trajectory_request"/>
+
+    <!-- mock_multi_uav 行为参数。默认不发 stop，降落由 Rich 键盘/本地键盘/RC 触发。 -->
+    <arg name="mock_auto_prepared" default="true"/>
+    <arg name="mock_auto_achieve" default="true"/>
+    <arg name="mock_auto_stop" default="false"/>
+    <arg name="mock_sync_reset_from_gcs_status" default="true"/>
+    <arg name="mock_auto_reset_after_land" default="false"/>
     <arg name="mock_prepared_delay" default="1.0"/>
-    <arg name="mock_achieve_delay" default="1.0"/>
+    <arg name="mock_achieve_delay" default="5.0"/>
     <arg name="mock_follow_duration" default="8.0"/>
-    <arg name="mock_auto_stop" default="true"/>
+    <arg name="mock_publish_rate_hz" default="50.0"/>
+    <arg name="mock_flag_rate_hz" default="5.0"/>
+    <arg name="mock_land_duration" default="5.0"/>
+    <arg name="mock_initial_radius" default="1.0"/>
+    <arg name="mock_initial_z" default="0.0"/>
+
+    <!-- traj_router.py 会按 traj_type 发 trajectory1/trajectory2/...；桥接默认关闭。 -->
+    <arg name="mock_bridge_trajectory_request" default="false"/>
+    <arg name="mock_rewrite_request_from" default="main_trajectory"/>
+    <arg name="mock_rewrite_request_to" default="trajectory1"/>
 
     <include file="$(find sz_indoor_launch)/launch/coop_gcs.launch">
+        <arg name="self_id" value="$(arg self_id)"/>
         <arg name="participants" value="$(arg participants)"/>
         <arg name="master_id" value="$(arg master_id)"/>
         <arg name="run_id" value="$(arg run_id)"/>
+        <arg name="control_rate_hz" value="$(arg control_rate_hz)"/>
+        <arg name="status_rate_hz" value="$(arg status_rate_hz)"/>
         <arg name="takeoff_height" value="$(arg takeoff_height)"/>
         <arg name="takeoff_duration" value="$(arg takeoff_duration)"/>
+        <arg name="traj_type" value="$(arg traj_type)"/>
+        <arg name="takeoff_reached_tolerance" value="$(arg takeoff_reached_tolerance)"/>
+        <arg name="takeoff_timeout_margin" value="$(arg takeoff_timeout_margin)"/>
         <arg name="land_reset_delay" value="$(arg land_reset_delay)"/>
+        <arg name="traj_router_service" value="$(arg traj_router_service)"/>
+        <arg name="gcs_event_service" value="$(arg gcs_event_service)"/>
+        <arg name="operator_service" value="$(arg operator_service)"/>
+        <arg name="uav_command_service_template" value="$(arg uav_command_service_template)"/>
+        <arg name="rc_in_topic" value="$(arg rc_in_topic)"/>
+        <arg name="rc_takeoff_channel" value="$(arg rc_takeoff_channel)"/>
+        <arg name="rc_takeoff_threshold" value="$(arg rc_takeoff_threshold)"/>
+        <arg name="rc_takeoff_direction" value="$(arg rc_takeoff_direction)"/>
+        <arg name="rc_land_channel" value="$(arg rc_land_channel)"/>
+        <arg name="rc_land_threshold" value="$(arg rc_land_threshold)"/>
+        <arg name="rc_land_direction" value="$(arg rc_land_direction)"/>
+        <arg name="rc_abort_channel" value="$(arg rc_abort_channel)"/>
+        <arg name="rc_abort_threshold" value="$(arg rc_abort_threshold)"/>
+        <arg name="rc_abort_direction" value="$(arg rc_abort_direction)"/>
+        <arg name="enable_keyboard" value="$(arg enable_keyboard)"/>
+        <arg name="node_output" value="$(arg node_output)"/>
         <arg name="launch_monitor" value="$(arg launch_monitor)"/>
+        <arg name="monitor_screen" value="$(arg monitor_screen)"/>
         <arg name="launch_traj_router" value="$(arg launch_traj_router)"/>
         <arg name="launch_trajectory_node" value="$(arg launch_trajectory_node)"/>
+        <arg name="traj_router_output" value="$(arg traj_router_output)"/>
+        <arg name="trajectory_node_output" value="$(arg trajectory_node_output)"/>
         <arg name="trajectory_omega" value="$(arg trajectory_omega)"/>
-        <arg name="traj_router_uav_id" value="/$(arg master_id)"/>
+        <arg name="traj_router_uav_id" value="$(arg traj_router_uav_id)"/>
+        <arg name="traj_router_landing_duration" value="$(arg traj_router_landing_duration)"/>
     </include>
 
     <node pkg="sz_indoor_traj_router"
           type="mock_multi_uav.py"
           name="mock_multi_uav"
-          output="screen">
+          output="$(arg mock_output)">
         <param name="participants" value="$(arg participants)"/>
         <param name="run_id" value="$(arg run_id)"/>
+        <param name="gcs_event_service" value="$(arg mock_gcs_event_service)"/>
+        <param name="gcs_status_topic" value="$(arg mock_gcs_status_topic)"/>
+        <param name="command_service_template" value="$(arg mock_command_service_template)"/>
+        <param name="state_topic_template" value="$(arg mock_state_topic_template)"/>
+        <param name="flag_topic_template" value="$(arg mock_flag_topic_template)"/>
+        <param name="trajectory_request_topic" value="$(arg mock_trajectory_request_topic)"/>
         <param name="takeoff_height" value="$(arg takeoff_height)"/>
         <param name="takeoff_duration" value="$(arg takeoff_duration)"/>
+        <param name="land_duration" value="$(arg mock_land_duration)"/>
+        <param name="initial_radius" value="$(arg mock_initial_radius)"/>
+        <param name="initial_z" value="$(arg mock_initial_z)"/>
         <param name="publish_rate_hz" value="$(arg mock_publish_rate_hz)"/>
+        <param name="flag_rate_hz" value="$(arg mock_flag_rate_hz)"/>
+        <param name="auto_prepared" value="$(arg mock_auto_prepared)"/>
+        <param name="auto_achieve" value="$(arg mock_auto_achieve)"/>
+        <param name="auto_stop" value="$(arg mock_auto_stop)"/>
+        <param name="sync_reset_from_gcs_status" value="$(arg mock_sync_reset_from_gcs_status)"/>
+        <param name="auto_reset_after_land" value="$(arg mock_auto_reset_after_land)"/>
         <param name="prepared_delay" value="$(arg mock_prepared_delay)"/>
         <param name="achieve_delay" value="$(arg mock_achieve_delay)"/>
         <param name="follow_duration" value="$(arg mock_follow_duration)"/>
-        <param name="auto_stop" value="$(arg mock_auto_stop)"/>
-        <!-- traj_router.py 发 main_trajectory；trajectory_node 当前接受 trajectory1/trajectory2。 -->
-        <param name="bridge_trajectory_request" value="true"/>
-        <param name="rewrite_request_from" value="main_trajectory"/>
-        <param name="rewrite_request_to" value="trajectory1"/>
+        <param name="bridge_trajectory_request" value="$(arg mock_bridge_trajectory_request)"/>
+        <param name="rewrite_request_from" value="$(arg mock_rewrite_request_from)"/>
+        <param name="rewrite_request_to" value="$(arg mock_rewrite_request_to)"/>
     </node>
 </launch>

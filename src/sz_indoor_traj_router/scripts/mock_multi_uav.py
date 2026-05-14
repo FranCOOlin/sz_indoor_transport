@@ -8,7 +8,6 @@ from typing import Any, Dict, List
 import rospy
 from std_msgs.msg import Bool, Float64MultiArray, String
 
-from sz_indoor_controller.msg import UAVState
 from sz_indoor_fsm.srv import JsonCommand, JsonCommandResponse
 
 
@@ -42,16 +41,16 @@ class MockMultiUAV:
 
         self.run_id = str(rospy.get_param("~run_id", "coop_lift_test_001"))
         self.participants = parse_csv(
-            rospy.get_param("~participants", "uav170,uav171,uav173,uav174")
+            rospy.get_param("~participants", "uav1,uav2,uav3,uav4")
         )
         self.gcs_event_service = str(
             rospy.get_param("~gcs_event_service", "/gcs/fsm/event")
         )
+        self.gcs_status_topic = str(
+            rospy.get_param("~gcs_status_topic", "/gcs/fsm/status")
+        )
         self.command_service_template = str(
             rospy.get_param("~command_service_template", "/{uav_id}/fsm/command")
-        )
-        self.feedback_topic_template = str(
-            rospy.get_param("~feedback_topic_template", "/{uav_id}/quadrotor_feedback")
         )
         self.state_topic_template = str(
             rospy.get_param("~state_topic_template", "/{uav_id}/quadrotor_state")
@@ -72,6 +71,10 @@ class MockMultiUAV:
         self.auto_prepared = bool(rospy.get_param("~auto_prepared", True))
         self.auto_achieve = bool(rospy.get_param("~auto_achieve", True))
         self.auto_stop = bool(rospy.get_param("~auto_stop", True))
+        self.sync_reset_from_gcs_status = bool(
+            rospy.get_param("~sync_reset_from_gcs_status", True)
+        )
+        self.auto_reset_after_land = bool(rospy.get_param("~auto_reset_after_land", False))
         self.prepared_delay = float(rospy.get_param("~prepared_delay", 1.0))
         self.achieve_delay = float(rospy.get_param("~achieve_delay", 1.0))
         self.follow_duration = float(rospy.get_param("~follow_duration", 8.0))
@@ -80,6 +83,8 @@ class MockMultiUAV:
         self.takeoff_height = float(rospy.get_param("~takeoff_height", 3.0))
         self.takeoff_duration = float(rospy.get_param("~takeoff_duration", 6.0))
         self.land_duration = float(rospy.get_param("~land_duration", 5.0))
+        self.initial_radius = float(rospy.get_param("~initial_radius", 1.0))
+        self.initial_z = float(rospy.get_param("~initial_z", 0.0))
 
         self.started_time = now_sec()
         self.takeoff_started_time = 0.0
@@ -95,16 +100,10 @@ class MockMultiUAV:
         self.land_start_altitudes = dict(self.altitudes)
         self.positions = self._initial_positions()
 
-        self.feedback_pubs = {}
         self.state_pubs = {}
         self.flag_pubs = {}
         self.command_srvs = []
         for uav_id in self.participants:
-            self.feedback_pubs[uav_id] = rospy.Publisher(
-                self.feedback_topic_template.format(uav_id=uav_id),
-                UAVState,
-                queue_size=10,
-            )
             self.state_pubs[uav_id] = rospy.Publisher(
                 self.state_topic_template.format(uav_id=uav_id),
                 Float64MultiArray,
@@ -133,6 +132,13 @@ class MockMultiUAV:
             self._trajectory_request_cb,
             queue_size=10,
         )
+        if self.sync_reset_from_gcs_status:
+            rospy.Subscriber(
+                self.gcs_status_topic,
+                String,
+                self._gcs_status_cb,
+                queue_size=10,
+            )
         rospy.Timer(rospy.Duration(1.0 / max(self.publish_rate_hz, 1e-6)), self._timer_cb)
 
         rospy.loginfo(
@@ -145,10 +151,13 @@ class MockMultiUAV:
     def _initial_positions(self) -> Dict[str, List[float]]:
         positions = {}
         count = max(len(self.participants), 1)
-        radius = 1.0
         for index, uav_id in enumerate(self.participants):
             angle = 2.0 * math.pi * float(index) / float(count)
-            positions[uav_id] = [radius * math.cos(angle), radius * math.sin(angle), 0.0]
+            positions[uav_id] = [
+                self.initial_radius * math.cos(angle),
+                self.initial_radius * math.sin(angle),
+                self.initial_z,
+            ]
         return positions
 
     def _make_event_payload(self, event: str, uav_id: str = "", extra=None):
@@ -223,22 +232,52 @@ class MockMultiUAV:
             return JsonCommandResponse(True, "mock abort accepted")
 
         if cmd == "reset":
-            self._reset()
+            self._reset("remote_reset")
             return JsonCommandResponse(True, "mock reset accepted")
 
         return JsonCommandResponse(False, f"unknown cmd: {cmd}")
 
-    def _reset(self):
+    def _needs_reset(self) -> bool:
+        return (
+            self.mode != "idle"
+            or self.stop_sent
+            or any(self.sent_prepared.values())
+            or any(self.sent_achieve.values())
+            or any(abs(altitude) > 1e-6 for altitude in self.altitudes.values())
+        )
+
+    def _reset(self, reason: str):
+        rospy.loginfo("[mock_multi_uav] reset: %s", reason)
         self.mode = "idle"
         self.stop_sent = False
         self.takeoff_started_time = 0.0
         self.follow_started_time = 0.0
         self.land_started_time = 0.0
+        self.last_flag_time = 0.0
         self.sent_prepared = {uav_id: False for uav_id in self.participants}
         self.sent_achieve = {uav_id: False for uav_id in self.participants}
         self.altitudes = {uav_id: 0.0 for uav_id in self.participants}
         self.land_start_altitudes = dict(self.altitudes)
+        self.positions = self._initial_positions()
         self.started_time = now_sec()
+
+    def _gcs_status_cb(self, msg: String):
+        payload = json_loads(msg.data)
+        if not payload:
+            return
+        if str(payload.get("run_id", self.run_id)) != self.run_id:
+            return
+        if str(payload.get("role", "")).lower().strip() != "gcs":
+            return
+
+        state = str(payload.get("state", "")).upper().strip()
+        prepared = payload.get("prepared", [])
+        achieved = payload.get("achieved", [])
+        gcs_is_ready_for_new_round = (
+            state in ["PREPARE", "WAIT_TAKEOFF"] and not prepared and not achieved
+        )
+        if gcs_is_ready_for_new_round and self._needs_reset():
+            self._reset(f"gcs_status_{state.lower()}")
 
     def _trajectory_request_cb(self, msg: String):
         if not self.bridge_trajectory_request:
@@ -284,19 +323,31 @@ class MockMultiUAV:
             x, y, _ = self.positions[uav_id]
             z = self.altitudes[uav_id]
 
-            feedback = UAVState()
-            feedback.position.x = x
-            feedback.position.y = y
-            feedback.position.z = z
-            feedback.attitude.w = 1.0
-            self.feedback_pubs[uav_id].publish(feedback)
-
             state = Float64MultiArray()
-            state.data = [x, y, z]
+            state.data = [
+                x,
+                y,
+                z,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+            ]
             self.state_pubs[uav_id].publish(state)
 
     def _drive_events(self):
         t = now_sec()
+        if (
+            self.auto_reset_after_land
+            and self.mode == "land"
+            and t - self.land_started_time >= self.land_duration
+        ):
+            self._reset("land_complete")
+            return
+
         if self.auto_prepared and t - self.started_time >= self.prepared_delay:
             for uav_id in self.participants:
                 if not self.sent_prepared[uav_id]:

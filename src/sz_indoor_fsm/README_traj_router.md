@@ -42,8 +42,8 @@ GCS 会向这个 service 发送四类命令：
 | cmd | 时机 | traj_router 建议动作 |
 | --- | --- | --- |
 | `takeoff` | GCS 收到所有 UAV 的 `prepared`，并收到起飞确认后 | 规划并开始起飞轨迹 |
-| `traj_following` | 所有 UAV 起飞完成并上报 `achieve` 后 | 切换/确认进入主任务轨迹阶段 |
-| `land` | 主轨迹完成后，GCS 收到降落确认 | 规划并开始正常降落轨迹 |
+| `traj_following` | 所有 UAV 起飞完成并上报 `achieve` 后 | 根据 `traj_type` 切换/确认进入对应主任务轨迹阶段 |
+| `land` | GCS 在轨迹运行中收到降落确认后 | 停止主轨迹，规划并开始正常降落轨迹 |
 | `abort` | GCS 或 UAV 触发紧急中止 | 立即停止正常规划，进入你们定义的应急处理 |
 
 所有 GCS 发来的 JSON 都至少包含：
@@ -108,15 +108,24 @@ GCS 发送：
   "run_id": "coop_lift_test_001",
   "source": "gcs",
   "stamp": 1778737210.456,
+  "traj_type": 1,
   "participants": ["uav0", "uav1"]
 }
 ```
 
 建议行为：
 
-1. 切换到主轨迹阶段。
-2. 开始或确认持续发布主任务轨迹。
-3. 主轨迹完成后，调用 `/gcs/fsm/event` 发送 `stop`。
+1. 读取 `traj_type`，例如 `1` 表示 `trajectory1`、`2` 表示 `trajectory2`。
+2. 切换到对应主轨迹阶段。
+3. 开始或确认持续发布主任务轨迹。
+
+字段说明：
+
+- `traj_type`：主轨迹类型编号，正整数。默认值为 `1`。
+
+当前正常流程不再要求 traj_router 主动发送 `stop`。GCS 在 `TRAJ_FOLLOWING`
+期间收到 Rich/键盘/RC 的降落确认后，会直接发送 `land` 给 traj_router 和所有 UAV。
+`stop` 事件仍保留为兼容旧流程或异常提前结束流程使用。
 
 ### `land` payload
 

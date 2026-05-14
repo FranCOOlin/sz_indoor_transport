@@ -21,10 +21,12 @@ PREPARE
   -> WAIT_TAKEOFF
   -> TAKEOFF_RUNNING
   -> TRAJ_FOLLOWING
-  -> STOP
   -> LAND
   -> PREPARE
 ```
+
+`STOP` 仍保留为兼容状态：如果 traj_router 主动上报 `stop`，GCS 可以进入 `STOP`。
+但正常联调流程不再等待 `stop`；在 `TRAJ_FOLLOWING` 中按降落键或触发降落 RC 即可直接进入 `LAND`。
 
 MASTER / SLAVE:
 
@@ -62,9 +64,10 @@ GCS 的主动切换逻辑集中在 `_tick_gcs()`：
 
 | 当前状态 | 切换条件 | 下一个状态 | 关键函数调用 |
 | --- | --- | --- | --- |
-| `PREPARE` | GCS 不做本地 UAVState 自检，进入等待 UAV 准备状态 | `WAIT_TAKEOFF` | `_set_state(WAIT_TAKEOFF, "gcs_skip_prepare_check")` |
+| `PREPARE` | GCS 不做本地 `quadrotor_state` 自检，进入等待 UAV 准备状态 | `WAIT_TAKEOFF` | `_set_state(WAIT_TAKEOFF, "gcs_skip_prepare_check")` |
 | `WAIT_TAKEOFF` | `_all_prepared()` 为真，且 `_manual_takeoff_requested(keyboard_commands)` 为真 | `TAKEOFF_RUNNING` | `_start_takeoff_from_gcs()` |
 | `TAKEOFF_RUNNING` | `_all_achieved()` 为真 | `TRAJ_FOLLOWING` | `_start_traj_following_from_gcs()` |
+| `TRAJ_FOLLOWING` | `_manual_land_requested(keyboard_commands)` 为真 | `LAND` | `_start_land_from_gcs()` |
 | `TRAJ_FOLLOWING` | GCS 的 event service 收到 `stop`，且当前状态仍是 `TRAJ_FOLLOWING` | `STOP` | `_event_service_cb()` -> `_set_state(STOP, "traj_router_stop")` |
 | `STOP` | `_manual_land_requested(keyboard_commands)` 为真 | `LAND` | `_start_land_from_gcs()` |
 | `LAND` | `now_sec() - land_start_time >= land_reset_delay` | `PREPARE` | `_reset_for_next_round("land_reset_delay")` |
@@ -76,10 +79,13 @@ GCS 的主动切换逻辑集中在 `_tick_gcs()`：
 `_start_traj_following_from_gcs()` 会调用：
 
 ```python
+payload = {"participants": self.participants, "traj_type": self.traj_type}
 _send_to_traj_router("traj_following", payload)
 _broadcast_to_uavs("traj_following", payload)
 _set_state(TRAJ_FOLLOWING, "all_uavs_achieved")
 ```
+
+`traj_type` 默认是 `1`，可通过 launch 参数修改为 `2`、`3` 等。traj_router 可据此选择不同主轨迹。
 
 `_start_land_from_gcs()` 会调用：
 
@@ -104,13 +110,13 @@ MASTER 和 SLAVE 共用 `_tick_uav()`：
 
 `_health_ok()` 同时要求：
 
-- 最近收到过 `UAVState`，且未超过 `health_timeout`。
+- 最近收到过 `quadrotor_state`，且未超过 `health_timeout`。
 - `_health_rate() >= health_min_rate_hz`。
 - `_uav_state_msg_valid(msg)` 通过。
 
 `_takeoff_reached()` 默认接受两个条件之一：
 
-- 当前高度 `position.z` 与 `takeoff_height` 的差值不超过 `takeoff_reached_tolerance`。
+- 当前高度 `data[2]` 与 `takeoff_height` 的差值不超过 `takeoff_reached_tolerance`。
 - `takeoff_started` 后经过 `takeoff_duration + takeoff_timeout_margin`。
 
 UAV 收到 GCS 的 `takeoff_started` 命令时，`_command_service_cb()` 会更新
@@ -130,7 +136,7 @@ _set_state(TAKEOFF_RUNNING, "gcs_takeoff_started")
 | --- | --- | --- |
 | `prepared` | 将 `uav_id` 加入 `prepared_uavs` | 不立即切换；下一次 `_tick_gcs()` 用 `_all_prepared()` 判断 |
 | `achieve` | 将 `uav_id` 加入 `achieved_uavs` | 不立即切换；下一次 `_tick_gcs()` 用 `_all_achieved()` 判断 |
-| `stop` | 保存 `last_stop_payload` | 如果 GCS 正在 `TRAJ_FOLLOWING`，立即切到 `STOP` |
+| `stop` | 保存 `last_stop_payload` | 兼容旧流程；如果 GCS 正在 `TRAJ_FOLLOWING`，立即切到 `STOP` |
 | `abort` | 进入 ABORT 流程 | 立即调用 `_enter_abort(...)` |
 
 ### 操作员、键盘和 RC 输入
@@ -146,6 +152,10 @@ GCS 的手动降落确认来自 `_manual_land_requested(keyboard_commands)`：
 - Rich monitor 发送 `land`，置位 `operator_land_requested`。
 - 本地键盘按 `key_land`，默认是 `l`。
 - RC 降落通道出现上升沿：`_rc_rising_edge("land")`。
+
+当前逻辑中，GCS 在 `TRAJ_FOLLOWING` 或 `STOP` 状态收到手动降落确认，都会调用
+`_start_land_from_gcs()`：先向 traj_router 发送 `land` service，再向所有 UAV FSM
+广播 `land`，最后 GCS 自身进入 `LAND`。
 
 ABORT 来自 `_manual_abort_requested(keyboard_commands)` 或外部 service：
 
@@ -192,6 +202,108 @@ _send_gcs_event("abort", {"reason": reason})
 _set_state(PREPARE, reason)
 ```
 
+## 按角色划分的职责
+
+这套 FSM 的核心原则是：GCS 做全局编排和人工确认，UAV FSM 做本机状态判断，
+traj_router 做轨迹分发和轨迹类型选择。调试 mock 只模拟接口，不代表真实飞控逻辑。
+
+### GCS
+
+GCS 负责全队任务编排，主要逻辑在 `CoopFSM._tick_gcs()`：
+
+- 维护 `participants`、`prepared_uavs`、`achieved_uavs`。
+- 判断是否全部 UAV 已 prepared：`_all_prepared()`。
+- 判断是否全部 UAV 已 achieve：`_all_achieved()`。
+- 接收 Rich monitor / 键盘 / RC 的起飞、降落、ABORT、reset 操作。
+- 起飞确认满足后调用 `_start_takeoff_from_gcs()`。
+- 所有 UAV achieve 后调用 `_start_traj_following_from_gcs()`。
+- 运行轨迹期间收到降落触发后调用 `_start_land_from_gcs()`。
+- ABORT 时调用 `_enter_abort()`，并向 traj_router 和所有 UAV 广播 `abort`。
+
+GCS 不判断单机位置是否健康，也不计算轨迹点。GCS 切换到运行轨迹时，会把
+`traj_type` 一起发给 traj_router：
+
+```python
+payload = {"participants": self.participants, "traj_type": self.traj_type}
+_send_to_traj_router("traj_following", payload)
+```
+
+### MASTER / SLAVE UAV
+
+MASTER 和 SLAVE 的单机 FSM 逻辑基本一致，主要逻辑在 `CoopFSM._tick_uav()`。
+`master_id` 目前主要用于 GCS 侧默认监听哪一路 RC 输入，不改变单机 FSM 的判断方式。
+
+- 监听本机 `/<uav_id>/quadrotor_state`。
+- 检查状态话题是否新鲜、频率是否足够、数据格式是否有效：`_health_ok()`。
+- 健康检查通过后向 GCS 上报 `prepared`。
+- 收到 GCS `takeoff_started` 后进入 `TAKEOFF`。
+- 判断本机是否到达起飞高度：`_takeoff_reached()`。
+- 起飞完成后向 GCS 上报 `achieve`，并进入 `WAIT`。
+- 收到 GCS `traj_following` 后进入 `TRAJ_FOLLOWING`。
+- 收到 GCS `land` 后进入 `LAND`。
+- 收到 ABORT 后进入 `ABORT`，并调用 `force_land()` 作为强制降落 hook。
+
+当前 `quadrotor_state` 使用 `std_msgs/Float64MultiArray`，数据顺序是：
+
+```text
+[px, py, pz, vx, vy, vz, qw, qx, qy, qz]
+```
+
+速度、加速度和真实控制动作不由 FSM 自己计算。真实飞行接口应该接到
+`trigger_takeoff()`、`trigger_traj_following()`、`trigger_land()`、`force_land()` 这些 hook。
+
+### traj_router
+
+traj_router 负责轨迹侧执行，主要入口是 `/traj_router/command`：
+
+- 收到 `takeoff` 后执行起飞轨迹相关逻辑。
+- 收到 `traj_following` 后读取 `traj_type`，选择并发布对应轨迹。
+- 收到 `land` 后执行降落轨迹相关逻辑。
+- 收到 `abort` 后停止当前轨迹或进入安全处理。
+
+FSM 不直接选择轨迹文件或轨迹 topic 的细节，只把任务意图和 `traj_type` 发给
+traj_router。正常流程中，进入 `TRAJ_FOLLOWING` 后不再等待 `stop` 指令；降落由 GCS
+侧的键盘、RC 或 Rich monitor 操作触发。
+
+### Rich monitor / operator
+
+Rich monitor 是人工操作入口，不直接控制 UAV 或 traj_router。它只向 GCS 的
+`/gcs/fsm/operator` 发送命令：
+
+- `takeoff`：允许 GCS 从 `WAIT_TAKEOFF` 开始起飞。
+- `land`：允许 GCS 在运行轨迹期间进入降落。
+- `abort`：触发 GCS ABORT 流程。
+- `reset`：清理本轮状态，回到 `PREPARE`。
+
+### debug mock
+
+debug mock 用于本地联调 GCS 和 traj_router。它模拟 UAV 侧接口：
+
+- 发布 `/uav1/quadrotor_state` 到 `/uav4/quadrotor_state`。
+- 提供 `/<uav_id>/fsm/command`，接收 GCS 广播的命令。
+- 可自动发送 `prepared` 和 `achieve` 给 GCS。
+- 可监听 GCS status，在 GCS reset 后清空 mock 的单轮状态。
+- `mock_achieve_delay` 会影响从 `TAKEOFF` 到 `TRAJ_FOLLOWING` 的速度。
+
+如果 debug launch 一进入 `TAKEOFF` 很快就进入 `TRAJ_FOLLOWING`，通常是因为
+`mock_auto_achieve:=true` 且 `mock_achieve_delay` 比较短。这是 mock 行为，不代表真实无人机已经完成起飞判断。
+
+### 判断归属速查
+
+| 判断 / 操作 | 完成角色 | 主要函数 |
+| --- | --- | --- |
+| 单机状态话题是否健康 | UAV FSM | `_health_ok()` |
+| 单机状态数据格式是否有效 | UAV FSM | `_uav_state_msg_valid()` |
+| 单机是否到达起飞高度 | UAV FSM | `_takeoff_reached()` |
+| 是否所有 UAV 已 prepared | GCS | `_all_prepared()` |
+| 是否允许起飞 | GCS | `_manual_takeoff_requested()` |
+| 是否所有 UAV 已 achieve | GCS | `_all_achieved()` |
+| 是否进入轨迹跟踪 | GCS | `_start_traj_following_from_gcs()` |
+| 选择第几条轨迹 | traj_router | `traj_type` 对应的处理逻辑 |
+| 运行轨迹期间是否降落 | GCS | `_manual_land_requested()` |
+| ABORT 广播 | GCS | `_enter_abort()` |
+| 单机强制降落 hook | UAV FSM | `force_land()` |
+
 ## Service 与 Topic
 
 ### JsonCommand.srv
@@ -231,9 +343,10 @@ string message
   - `std_msgs/String`
   - 每次 JSON service 收/发的审计记录。ROS1 rosbag 不能直接录 service，所以复盘 service 请录这些 topic。
 
-- `/<uav_id>/quadrotor_feedback`
-  - `sz_indoor_controller/UAVState`
-  - UAV 自检和起飞高度判断输入。可用 `uav_state_topic:=...` 改成你的真实话题。
+- `/<uav_id>/quadrotor_state`
+  - `std_msgs/Float64MultiArray`
+  - UAV 自检和起飞高度判断输入。格式为 `[px, py, pz, vx, vy, vz, qw, qx, qy, qz]`。
+    可用 `uav_state_topic:=...` 改成你的真实话题。
 
 ## 常用启动
 
@@ -281,6 +394,60 @@ roslaunch sz_indoor_fsm coop_fsm.launch \
   launch_monitor:=false
 ```
 
+### GCS + traj_router 联调
+
+没有真实 UAV 端时，可以用 `mock_multi_uav.py` 模拟多机端：
+
+```bash
+roslaunch sz_indoor_launch debug_gcs_traj_router.launch
+```
+
+默认会启动：
+
+- `gcs_coop_fsm`
+- `fsm_monitor`
+- `traj_router`
+- `formation_trajectory`
+- `mock_multi_uav`
+
+默认参与者是 `uav1,uav2,uav3,uav4`。mock 会发布：
+
+- `/uav1/quadrotor_state`
+- `/uav2/quadrotor_state`
+- `/uav3/quadrotor_state`
+- `/uav4/quadrotor_state`
+
+这些话题类型是 `std_msgs/Float64MultiArray`，数据格式和 `observer.cpp` 保持一致：
+`[px, py, pz, vx, vy, vz, qw, qx, qy, qz]`。mock 中速度为 0，姿态为单位四元数。
+四台无人机的默认位置分布在半径 `mock_initial_radius` 的圆上，因此每台位置都不同；
+默认 `mock_initial_radius=1.0`、`mock_initial_z=0.0`。
+
+联调流程：
+
+1. 等 `GCS Info` 里 `prepared all=True`。
+2. 在 Rich 操作台按 `t`，GCS 会向 traj_router 发送 `takeoff`，并向 mock UAV 发送 `takeoff_started`。
+3. mock UAV 自动上报 `achieve` 后，GCS 会进入 `TRAJ_FOLLOWING`，并向 traj_router/UAV 发送 `traj_following`。
+   发送给 traj_router 的 JSON 中会包含 `traj_type`。
+4. 需要降落时，在 Rich 操作台按 `l`，或触发配置的降落 RC 通道。
+5. GCS 会直接调用 `_start_land_from_gcs()`：向 traj_router 发送 `land`，向所有 UAV 发送 `land`，并进入 `LAND`。
+6. GCS 自动或手动 reset 后，mock 会监听 `/gcs/fsm/status`，看到 GCS 回到新一轮
+   `PREPARE/WAIT_TAKEOFF` 且 prepared/achieve 已清空时，也重置自己的 `prepared`、
+   `achieve`、高度和模式锁存。
+
+`debug_gcs_traj_router.launch` 已把 GCS、traj_router、trajectory_node、mock UAV 的参数都暴露在顶层。
+常用调试参数示例：
+
+```bash
+roslaunch sz_indoor_launch debug_gcs_traj_router.launch \
+  participants:=uav1,uav2,uav3,uav4 \
+  traj_type:=1 \
+  trajectory_omega:=0.2 \
+  mock_auto_stop:=false \
+  mock_sync_reset_from_gcs_status:=true \
+  rc_land_channel:=5 \
+  rc_land_threshold:=1800
+```
+
 ## 自动测试
 
 半自动测试，起飞/降落由 Rich 操作台按键完成：
@@ -293,9 +460,8 @@ roslaunch sz_indoor_fsm coop_fsm_auto_test.launch launch_monitor:=true
 
 1. 等 `GCS Info` 里 `prepared all=True`。
 2. 按 `t`。
-3. 等 GCS 到 `STOP`。
-4. 按 `l`。
-5. 测试脚本看到 `LAND -> PREPARE/WAIT_TAKEOFF` 后 clean exit。
+3. GCS 进入 `TRAJ_FOLLOWING` 后按 `l`。
+4. 测试脚本看到 `LAND -> PREPARE/WAIT_TAKEOFF` 后 clean exit。
 
 全自动回归测试：
 
@@ -304,6 +470,10 @@ roslaunch sz_indoor_fsm coop_fsm_auto_test.launch \
   launch_monitor:=false \
   manual_operator:=false
 ```
+
+全自动测试默认也走直接降落路径：进入 `TRAJ_FOLLOWING` 并运行 `follow_duration` 后，
+测试节点会打降落 RC。需要回测旧的 `stop -> STOP -> land` 路径时，可加
+`auto_send_stop:=true`。
 
 ## launch 参数说明
 
@@ -316,8 +486,8 @@ roslaunch sz_indoor_fsm coop_fsm_auto_test.launch \
 - `run_id`：本轮实验 ID，所有节点必须一致。
 - `takeoff_height`：起飞目标高度。
 - `takeoff_duration`：发给 traj_router 的起飞时间，同时用于超时判据。
-- `uav_state_topic`：UAVState 输入话题。
-- `health_min_rate_hz`：UAVState 最低频率。
+- `uav_state_topic`：`quadrotor_state` 输入话题，默认 `/<self_id>/quadrotor_state`。
+- `health_min_rate_hz`：`quadrotor_state` 最低频率。
 - `traj_router_service`：中央轨迹路由服务。
 - `gcs_event_service`：GCS 接收 prepared/achieve/stop 的服务。
 - `operator_service`：Rich 操作台控制 GCS 的服务。
@@ -377,16 +547,16 @@ def on_tick_wait(self):
 - `on_tick_land`
 - `on_tick_abort`
 
-### 自定义 UAVState 有效性
+### 自定义 quadrotor_state 有效性
 
 改这里：
 
 ```python
-def _uav_state_msg_valid(self, msg: UAVState):
+def _uav_state_msg_valid(self, msg: Float64MultiArray):
     ...
 ```
 
-默认检查 `position`、`velocity` 是否为有限数值；可选检查姿态四元数。
+默认检查 `data` 至少包含 10 个数，位置/速度是否为有限数值；可选检查姿态四元数。
 
 ### 自定义起飞完成判据
 

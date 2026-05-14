@@ -8,7 +8,7 @@ This node is a test harness, not a flight node. It replaces the pieces that are
 normally outside the FSM so the state machine can be tested on a laptop:
 
 - fake /traj_router/command JsonCommand service
-- fake UAVState streams for each participant
+- fake quadrotor_state streams for each participant
 - optional fake RCIn pulses for fully automatic testing
 
 Modes:
@@ -22,9 +22,8 @@ from typing import Any, Dict, List
 
 import rospy
 from mavros_msgs.msg import RCIn
-from std_msgs.msg import String
+from std_msgs.msg import Float64MultiArray, String
 
-from sz_indoor_controller.msg import UAVState
 from sz_indoor_fsm.srv import JsonCommand, JsonCommandResponse
 
 
@@ -61,7 +60,7 @@ class FSMAutoTest:
         self.run_id = str(rospy.get_param("~run_id", "coop_lift_test_001"))
         self.participants = parse_csv(rospy.get_param("~participants", "uav0,uav1"))
         self.state_topic_template = str(
-            rospy.get_param("~state_topic_template", "/{uav_id}/quadrotor_feedback")
+            rospy.get_param("~state_topic_template", "/{uav_id}/quadrotor_state")
         )
         self.status_topic = str(rospy.get_param("~gcs_status_topic", "/gcs/fsm/status"))
         self.gcs_event_service = str(
@@ -80,6 +79,7 @@ class FSMAutoTest:
         self.land_duration = float(rospy.get_param("~land_duration", 2.0))
         self.test_timeout = float(rospy.get_param("~test_timeout", 60.0))
         self.manual_operator = bool(rospy.get_param("~manual_operator", False))
+        self.auto_send_stop = bool(rospy.get_param("~auto_send_stop", False))
 
         # RC channel numbers are 1-based, matching transmitter labels and FSM
         # parameters. The message array is filled in _publish_rc().
@@ -92,7 +92,7 @@ class FSMAutoTest:
         self.state_pubs = {
             uav_id: rospy.Publisher(
                 self.state_topic_template.format(uav_id=uav_id),
-                UAVState,
+                Float64MultiArray,
                 queue_size=10,
             )
             for uav_id in self.participants
@@ -104,7 +104,7 @@ class FSMAutoTest:
         rospy.Subscriber(self.status_topic, String, self._gcs_status_cb, queue_size=20)
 
         # Fake world state. Altitude is a linear ramp in takeoff/land; that is
-        # enough to exercise the same FSM conditions as real UAVState feedback.
+        # enough to exercise the same FSM conditions as real quadrotor_state feedback.
         self.gcs_status = {}
         self.gcs_state_history = []
         self.altitudes = {uav_id: 0.0 for uav_id in self.participants}
@@ -213,7 +213,7 @@ class FSMAutoTest:
             return False
 
     def _publish_states(self):
-        """Publish fake UAVState for every participant."""
+        """Publish fake quadrotor_state for every participant."""
         t = now_sec()
         if t - self.last_state_pub_time < 1.0 / max(self.state_pub_rate_hz, 1e-6):
             return
@@ -229,9 +229,19 @@ class FSMAutoTest:
                 self.altitudes[uav_id] = self.land_start_altitudes[uav_id] * (1.0 - alpha)
 
         for uav_id, pub in self.state_pubs.items():
-            msg = UAVState()
-            msg.position.z = self.altitudes[uav_id]
-            msg.attitude.w = 1.0
+            msg = Float64MultiArray()
+            msg.data = [
+                0.0,
+                0.0,
+                self.altitudes[uav_id],
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+            ]
             pub.publish(msg)
 
     def _publish_rc(self):
@@ -268,16 +278,28 @@ class FSMAutoTest:
             self.takeoff_pulse_until = t + self.rc_pulse_sec
             rospy.loginfo("[fsm_auto_test] pulsing takeoff RC channel")
 
-        if self.mode == "follow" and not self.stop_sent:
+        if self.auto_send_stop and self.mode == "follow" and not self.stop_sent:
             if t - self.follow_start_time >= self.follow_duration:
                 if self._call_gcs_event("stop", {"reason": "auto_test_follow_done"}):
                     self.stop_sent = True
                     rospy.loginfo("[fsm_auto_test] sent stop event")
 
-        if not self.manual_operator and not self.land_triggered and gcs_state == "STOP":
+        if (
+            not self.manual_operator
+            and
+            not self.land_triggered
+            and gcs_state == "TRAJ_FOLLOWING"
+            and self.mode == "follow"
+            and t - self.follow_start_time >= self.follow_duration
+        ):
             self.land_triggered = True
             self.land_pulse_until = t + self.rc_pulse_sec
             rospy.loginfo("[fsm_auto_test] pulsing land RC channel")
+
+        if not self.manual_operator and not self.land_triggered and gcs_state == "STOP":
+            self.land_triggered = True
+            self.land_pulse_until = t + self.rc_pulse_sec
+            rospy.loginfo("[fsm_auto_test] pulsing land RC channel from STOP")
 
         if self.manual_operator and gcs_state == "LAND":
             self.land_triggered = True

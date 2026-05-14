@@ -8,6 +8,9 @@
     <!-- 自动测试使用独立 run_id，避免和实飞/手动测试的旧事件混用。 -->
     <arg name="run_id" default="coop_lift_test_001_auto_test"/>
 
+    <!-- GCS 进入 TRAJ_FOLLOWING 时发给 traj_router 的主轨迹类型编号。 -->
+    <arg name="traj_type" default="1"/>
+
     <!-- 是否启动 Rich 操作台。manual_operator=true 时建议保持 true。 -->
     <arg name="launch_monitor" default="true"/>
 
@@ -21,6 +24,7 @@
         <arg name="master_id" value="$(arg master_id)"/>
         <arg name="participants" value="$(arg participants)"/>
         <arg name="run_id" value="$(arg run_id)"/>
+        <arg name="traj_type" value="$(arg traj_type)"/>
         <arg name="enable_keyboard" value="false"/>
         <arg name="node_output" value="log"/>
         <arg name="launch_monitor" value="$(arg launch_monitor)"/>
@@ -28,12 +32,13 @@
         <arg name="health_min_rate_hz" value="5.0"/>
     </include>
 
-    <!-- master UAV FSM。测试脚本会发布 /<master_id>/quadrotor_feedback。 -->
+    <!-- master UAV FSM。测试脚本会发布 /<master_id>/quadrotor_state。 -->
     <include file="$(find sz_indoor_fsm)/launch/coop_fsm.launch">
         <arg name="role" value="master"/>
         <arg name="self_id" value="$(arg master_id)"/>
         <arg name="master_id" value="$(arg master_id)"/>
         <arg name="run_id" value="$(arg run_id)"/>
+        <arg name="traj_type" value="$(arg traj_type)"/>
         <arg name="enable_keyboard" value="false"/>
         <arg name="node_output" value="log"/>
         <arg name="launch_monitor" value="false"/>
@@ -41,12 +46,13 @@
         <arg name="takeoff_duration" value="2.0"/>
     </include>
 
-    <!-- slave UAV FSM。测试脚本会发布 /uav1/quadrotor_feedback。 -->
+    <!-- slave UAV FSM。测试脚本会发布 /uav1/quadrotor_state。 -->
     <include file="$(find sz_indoor_fsm)/launch/coop_fsm.launch">
         <arg name="role" value="slave"/>
         <arg name="self_id" value="uav1"/>
         <arg name="master_id" value="$(arg master_id)"/>
         <arg name="run_id" value="$(arg run_id)"/>
+        <arg name="traj_type" value="$(arg traj_type)"/>
         <arg name="enable_keyboard" value="false"/>
         <arg name="node_output" value="log"/>
         <arg name="launch_monitor" value="false"/>
@@ -57,8 +63,8 @@
     <!--
         自动测试驱动器：
         - 提供 fake /traj_router/command service
-        - 发布 fake UAVState 和 fake RCIn
-        - 在 TRAJ_FOLLOWING 持续 follow_duration 后向 GCS 发送 stop
+        - 发布 fake quadrotor_state 和 fake RCIn
+        - 在 TRAJ_FOLLOWING 持续 follow_duration 后模拟降落 RC
         - required=true：测试 PASS/FAIL 后退出整个 roslaunch
     -->
     <node pkg="sz_indoor_fsm"
@@ -68,7 +74,7 @@
           required="true">
         <param name="participants" value="$(arg participants)"/>
         <param name="run_id" value="$(arg run_id)"/>
-        <!-- fake UAVState 发布频率；必须高于 FSM health_min_rate_hz。 -->
+        <!-- fake quadrotor_state 发布频率；必须高于 FSM health_min_rate_hz。 -->
         <param name="state_pub_rate_hz" value="30.0"/>
         <!-- fake traj_following 持续多久后发送 stop 事件。 -->
         <param name="follow_duration" value="1.5"/>

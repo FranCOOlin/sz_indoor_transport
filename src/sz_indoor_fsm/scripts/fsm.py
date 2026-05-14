@@ -13,7 +13,7 @@ GCS:
     向 traj_router 和各 UAV 发送 JSON 服务命令，并等待操作员确认起飞/降落。
 
 MASTER / SLAVE:
-    单机任务 FSM。每架 UAV 检查自己的 UAVState 数据流，向 GCS 上报
+    单机任务 FSM。每架 UAV 检查自己的 quadrotor_state 数据流，向 GCS 上报
     prepared/achieve，接收 GCS 下发的状态切换命令，并拥有本地 ABORT 强制降落钩子。
 
 自定义行为的添加位置
@@ -50,9 +50,8 @@ from typing import Any, Dict, List, Optional
 
 import rospy
 from mavros_msgs.msg import RCIn
-from std_msgs.msg import String
+from std_msgs.msg import Float64MultiArray, String
 
-from sz_indoor_controller.msg import UAVState
 from sz_indoor_fsm.srv import JsonCommand, JsonCommandResponse
 
 
@@ -194,6 +193,7 @@ class CoopFSM:
         # 也会作为 achieve 的兜底超时时间。
         self.takeoff_height = float(rospy.get_param("~takeoff_height", 3.0))
         self.takeoff_duration = float(rospy.get_param("~takeoff_duration", 6.0))
+        self.traj_type = int(rospy.get_param("~traj_type", 1))
         self.takeoff_reached_tolerance = float(
             rospy.get_param("~takeoff_reached_tolerance", 0.25)
         )
@@ -204,13 +204,14 @@ class CoopFSM:
         self.service_timeout = float(rospy.get_param("~service_timeout", 0.3))
 
         # ------------------------------------------------------------------
-        # 基于 sz_indoor_controller/UAVState 的 UAV 健康检查
+        # 基于 observer 发布的 std_msgs/Float64MultiArray quadrotor_state 做 UAV 健康检查
         # ------------------------------------------------------------------
         # 话题按节点 id 划分作用域。GCS 自然位于 /gcs 下，
         # UAV 使用 /uav0、/uav1 等前缀，这样话题列表更容易浏览。
-        # 如果真实估计器在其他位置发布 UAVState，请覆盖 ~uav_state_topic。
+        # 期望格式：[px, py, pz, vx, vy, vz, qw, qx, qy, qz]。
+        # 如果真实估计器在其他位置发布状态，请覆盖 ~uav_state_topic。
         self.health_topic = str(
-            rospy.get_param("~uav_state_topic", f"{self.topic_prefix}/quadrotor_feedback")
+            rospy.get_param("~uav_state_topic", f"{self.topic_prefix}/quadrotor_state")
         )
         self.health_min_rate_hz = float(rospy.get_param("~health_min_rate_hz", 20.0))
         self.health_timeout = float(rospy.get_param("~health_timeout", 1.0))
@@ -356,7 +357,12 @@ class CoopFSM:
             self.command_srv = rospy.Service(
                 self.command_service, JsonCommand, self._command_service_cb
             )
-            rospy.Subscriber(self.health_topic, UAVState, self._uav_state_cb, queue_size=50)
+            rospy.Subscriber(
+                self.health_topic,
+                Float64MultiArray,
+                self._uav_state_cb,
+                queue_size=50,
+            )
 
         self.keyboard = KeyboardReader() if self.enable_keyboard else None
         if self.keyboard:
@@ -406,7 +412,7 @@ class CoopFSM:
         self.last_rc_time = now_sec()
         self.rc_channels = list(msg.channels)
 
-    def _uav_state_cb(self, msg: UAVState):
+    def _uav_state_cb(self, msg: Float64MultiArray):
         t = now_sec()
         self.last_uav_state_time = t
         self.uav_state_stamps.append(t)
@@ -417,23 +423,25 @@ class CoopFSM:
             self._uav_state_msg_valid(msg)
         )
 
-    def _uav_state_msg_valid(self, msg: UAVState):
-        """校验 UAVState 的语义内容。
+    def _uav_state_msg_valid(self, msg: Float64MultiArray):
+        """校验 quadrotor_state 的语义内容。
 
         当前默认检查：
+        - data 至少包含 [px, py, pz, vx, vy, vz, qw, qx, qy, qz]
         - 位置和速度都是有限数值
-        - 可选的姿态四元数是有限数值，且接近单位模长
+        - 姿态四元数是有限数值；可选检查其接近单位模长
 
-        如果后续向 UAVState 添加字段，请在本函数中扩展对应的有效性规则。
+        该格式和 sz_indoor_controller/src/observer.cpp 发布的 quadrotor_state 一致。
         """
-        position_values = [msg.position.x, msg.position.y, msg.position.z]
-        velocity_values = [msg.velocity.x, msg.velocity.y, msg.velocity.z]
+        if len(msg.data) < 10:
+            return False, "quadrotor_state_too_short"
+        position_values = [msg.data[0], msg.data[1], msg.data[2]]
+        velocity_values = [msg.data[3], msg.data[4], msg.data[5]]
         if not finite(position_values + velocity_values):
             return False, "position_or_velocity_not_finite"
 
         if self.require_attitude_valid:
-            q = msg.attitude
-            quat_values = [q.x, q.y, q.z, q.w]
+            quat_values = [msg.data[6], msg.data[7], msg.data[8], msg.data[9]]
             if not finite(quat_values):
                 return False, "attitude_not_finite"
             norm = math.sqrt(sum(float(v) * float(v) for v in quat_values))
@@ -929,7 +937,7 @@ class CoopFSM:
 
     def _start_traj_following_from_gcs(self):
         """所有 UAV achieve 后，GCS 启动主轨迹跟踪阶段。"""
-        payload = {"participants": self.participants}
+        payload = {"participants": self.participants, "traj_type": self.traj_type}
         self._send_to_traj_router("traj_following", payload)
         self._broadcast_to_uavs("traj_following", payload)
         self._set_state(TRAJ_FOLLOWING, "all_uavs_achieved")
@@ -953,7 +961,7 @@ class CoopFSM:
         """
         height_reached = False
         if self.current_uav_state is not None:
-            z = float(self.current_uav_state.position.z)
+            z = float(self.current_uav_state.data[2])
             height_reached = abs(z - self.takeoff_height) <= self.takeoff_reached_tolerance
         timed_out = (
             self.takeoff_started
@@ -1006,6 +1014,11 @@ class CoopFSM:
                 self._start_traj_following_from_gcs()
             return
 
+        if self.state == TRAJ_FOLLOWING:
+            if self._manual_land_requested(keyboard_commands):
+                self._start_land_from_gcs()
+            return
+
         if self.state == STOP:
             if self._manual_land_requested(keyboard_commands):
                 self._start_land_from_gcs()
@@ -1046,7 +1059,7 @@ class CoopFSM:
                 self.achieve_sent = self._send_gcs_event(
                     "achieve",
                     {
-                        "height": self.current_uav_state.position.z
+                        "height": self.current_uav_state.data[2]
                         if self.current_uav_state is not None
                         else None
                     },
@@ -1065,7 +1078,7 @@ class CoopFSM:
         t = now_sec()
         z = None
         if self.current_uav_state is not None:
-            z = float(self.current_uav_state.position.z)
+            z = float(self.current_uav_state.data[2])
         return {
             "stamp": t,
             "run_id": self.run_id,
@@ -1097,6 +1110,7 @@ class CoopFSM:
             "takeoff": {
                 "height": self.takeoff_height,
                 "duration": self.takeoff_duration,
+                "traj_type": self.traj_type,
                 "started": self.takeoff_started,
                 "elapsed": t - self.takeoff_start_time if self.takeoff_start_time > 0.0 else 0.0,
             },

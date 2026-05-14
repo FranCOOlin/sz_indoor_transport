@@ -20,6 +20,7 @@
     <!-- 起飞/降落相关参数。takeoff_duration 也会发给 traj_router。 -->
     <arg name="takeoff_height" default="3.0"/>
     <arg name="takeoff_duration" default="6.0"/>
+    <arg name="traj_type" default="1"/>
     <arg name="takeoff_reached_tolerance" default="0.25"/>
     <arg name="takeoff_timeout_margin" default="2.0"/>
     <arg name="land_reset_delay" default="5.0"/>
@@ -65,6 +66,7 @@
         <param name="uav_id" value="$(arg traj_router_uav_id)"/>
         <param name="target_height" value="$(arg takeoff_height)"/>
         <param name="takeoff_duration" value="$(arg takeoff_duration)"/>
+        <param name="traj_type" value="$(arg traj_type)"/>
         <param name="landing_duration" value="$(arg traj_router_landing_duration)"/>
     </node>
 
@@ -87,6 +89,7 @@
         <arg name="status_rate_hz" value="$(arg status_rate_hz)"/>
         <arg name="takeoff_height" value="$(arg takeoff_height)"/>
         <arg name="takeoff_duration" value="$(arg takeoff_duration)"/>
+        <arg name="traj_type" value="$(arg traj_type)"/>
         <arg name="takeoff_reached_tolerance" value="$(arg takeoff_reached_tolerance)"/>
         <arg name="takeoff_timeout_margin" value="$(arg takeoff_timeout_margin)"/>
         <arg name="land_reset_delay" value="$(arg land_reset_delay)"/>
