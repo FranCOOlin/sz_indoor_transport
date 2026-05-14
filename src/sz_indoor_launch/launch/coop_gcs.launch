@@ -18,8 +18,8 @@
     <arg name="status_rate_hz" default="5.0"/>
 
     <!-- 起飞/降落相关参数。takeoff_duration 也会发给 traj_router。 -->
-    <arg name="takeoff_height" default="3.0"/>
-    <arg name="takeoff_duration" default="6.0"/>
+    <arg name="takeoff_height" default="1.0"/>
+    <arg name="takeoff_duration" default="10.0"/>
     <arg name="traj_type" default="1"/>
     <arg name="takeoff_reached_tolerance" default="0.25"/>
     <arg name="takeoff_timeout_margin" default="2.0"/>

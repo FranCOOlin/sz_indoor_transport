@@ -21,10 +21,10 @@
     <arg name="status_rate_hz" default="5.0"/>
 
     <!-- 起飞目标高度，GCS 会通过 JSON service 发给 traj_router。 -->
-    <arg name="takeoff_height" default="3.0"/>
+    <arg name="takeoff_height" default="1.0"/>
 
     <!-- 起飞轨迹持续时间，GCS 发给 traj_router；UAV 也用它作为起飞完成超时判据的一部分。 -->
-    <arg name="takeoff_duration" default="6.0"/>
+    <arg name="takeoff_duration" default="10.0"/>
 
     <!-- 主轨迹类型编号。GCS 进入 TRAJ_FOLLOWING 时会把 traj_type 发给 traj_router。 -->
     <arg name="traj_type" default="1"/>
