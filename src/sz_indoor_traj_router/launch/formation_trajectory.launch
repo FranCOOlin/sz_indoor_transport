@@ -1,10 +1,12 @@
 <launch>
     <arg name="omega" default="0.3" />
+    <arg name="participants" default="uav170,uav171,uav173,uav174" />
 
     <node pkg="sz_indoor_traj_router"
           type="trajectory_node"
           name="formation_trajectory"
           output="screen">
         <param name="omega" value="$(arg omega)" />
+        <param name="participants" value="$(arg participants)" />
     </node>
 </launch>

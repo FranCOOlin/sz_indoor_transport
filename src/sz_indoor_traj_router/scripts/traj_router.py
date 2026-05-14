@@ -75,7 +75,7 @@ class MultiTrajRouterNode:
         self.default_traj_type = int(rospy.get_param("~traj_type", 1))
         self.landing_duration = float(rospy.get_param("~landing_duration", 5.0))
         self.trajectory_request_pub = rospy.Publisher(
-            '/trajectory_request', String, queue_size=10
+            '/trajectory_request', String, queue_size=10, latch=True
         )
 
         for uav_id in self.uavs:
@@ -108,7 +108,9 @@ class MultiTrajRouterNode:
     def _init_uav_communication(self, state):
         uav_id = state.uav_id
         
-        state.flag_pub = rospy.Publisher(f'{uav_id}/traj_generation_flag', Bool, queue_size=10)
+        state.flag_pub = rospy.Publisher(
+            f'{uav_id}/traj_generation_flag', Bool, queue_size=10, latch=True
+        )
         state.trajectory_pub = rospy.Publisher(f'{uav_id}/trajectory', TrajPoint, queue_size=10)
         
         traj_topic = f'{uav_id}/planning/traj_point'
@@ -222,17 +224,19 @@ class MultiTrajRouterNode:
         for uav_id in participants:
             state = self.uav_states[uav_id]
             if state.current_state in [
+                state.STATE_IDLE,
                 state.STATE_TAKEOFF,
                 state.STATE_HOVER,
                 state.STATE_TRAJ_FOLLOWING,
             ]:
-                self.request_trajectory_from_downstream(state, trajectory_name)
+                self.enable_trajectory_forwarding(state)
                 success.append(uav_id)
             else:
                 fail.append(f"{uav_id}({state.current_state})")
 
         if fail:
             return JsonCommandResponse(False, f"失败: {fail}")
+        self.request_trajectory_from_downstream(trajectory_name)
         return JsonCommandResponse(True, f"轨迹跟随 {trajectory_name}: {success}")
     
     def handle_land(self, participants):
@@ -253,18 +257,21 @@ class MultiTrajRouterNode:
             return JsonCommandResponse(False, f"失败: {fail}")
         return JsonCommandResponse(True, f"降落: {success}")
     
-    def request_trajectory_from_downstream(self, state, trajectory_name):
-        """请求轨迹"""
+    def enable_trajectory_forwarding(self, state):
+        """通知 trajectory_node 该 UAV 已准备好，并允许转发后续轨迹点。"""
         flag = Bool()
         flag.data = True
         state.flag_pub.publish(flag)
+        state.trajectory_active = True
+        state.trajectory_started = False
+
+    def request_trajectory_from_downstream(self, trajectory_name):
+        """请求 trajectory_node 生成指定轨迹。"""
 
         msg = String()
         msg.data = trajectory_name
         self.trajectory_request_pub.publish(msg)
-
-        state.trajectory_active = True
-        state.trajectory_started = False
+        rospy.loginfo("[轨迹请求] /trajectory_request=%s", trajectory_name)
     
     def transition_to_state(self, state, new_state):
         if new_state == state.current_state:

@@ -3,8 +3,8 @@
 
     <!-- GCS / FSM 参数。mock 默认发布 /uav1..4/quadrotor_state。 -->
     <arg name="self_id" default="gcs"/>
-    <arg name="participants" default="uav1,uav2,uav3,uav4"/>
-    <arg name="master_id" default="uav1"/>
+    <arg name="participants" default="uav170,uav171,uav173,uav174"/>
+    <arg name="master_id" default="uav170"/>
     <arg name="run_id" default="coop_lift_test_001"/>
     <arg name="control_rate_hz" default="30.0"/>
     <arg name="status_rate_hz" default="5.0"/>
