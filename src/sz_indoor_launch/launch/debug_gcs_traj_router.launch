@@ -26,7 +26,7 @@
     <!-- GCS 键盘/RC 输入参数。轨迹运行中触发 land 后，会直接给 traj_router 和 UAV 发送 land。 -->
     <arg name="rc_in_topic" default="/$(arg master_id)/mavros/rc/in"/>
     <arg name="rc_takeoff_channel" default="12"/>
-    <arg name="rc_takeoff_threshold" default="1500"/>
+    <arg name="rc_takeoff_threshold" default="1800"/>
     <arg name="rc_takeoff_direction" default="above"/>
     <arg name="rc_land_channel" default="5"/>
     <arg name="rc_land_threshold" default="1800"/>
