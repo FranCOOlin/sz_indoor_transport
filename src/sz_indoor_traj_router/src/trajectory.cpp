@@ -2,6 +2,7 @@
 #include <Eigen/Dense>
 #include <cmath>
 #include <std_msgs/Bool.h>
+#include <std_msgs/String.h>
 #include <std_msgs/Float64MultiArray.h>
 #include <sz_indoor_controller/TrajPoint.h>
 
@@ -11,15 +12,21 @@ private:
     ros::Publisher traj_pub[4];
     ros::Subscriber flag_subs[4];
     ros::Subscriber state_subs[4];
+    ros::Subscriber trajectory_request_sub;
     ros::Timer timer;
 
   
     Eigen::Vector3d current_pos[4];    
     Eigen::Vector3d d_offsets[4];      
-    Eigen::Vector3d formation_offsets[4];
+    Eigen::Vector3d circle_formation_offsets[4];
+    Eigen::Vector3d eight_formation_offsets[4];
     int uav_ids[4] = {0, 1, 3, 4};     
     bool ready_flags[4] = {false, false, false, false};
     bool all_ready = false;
+    bool trajectory_request_received = false;
+    bool trajectory_started = false;
+    int pending_traj_choice = 0;
+    int active_traj_choice = 0;
 
    
     double radius = 0.0;
@@ -33,13 +40,15 @@ public:
         ros::NodeHandle pnh("~");
         pnh.param("omega", omega, omega);
         circle_center << 0.0, 0.0, 0.0;
+        trajectory_request_sub = nh.subscribe<std_msgs::String>(
+            "/trajectory_request", 1, &FormationPlanner::trajectoryRequestCallback, this);
 
         for (int i = 0; i < 4; ++i) {
             int id = uav_ids[i];
             std::string uav_ns = "/uav17" + std::to_string(id);
             traj_pub[i] = nh.advertise<sz_indoor_controller::TrajPoint>(uav_ns + "/planning/traj_point", 10);
 
-            std::string flag_topic = "uav17" + std::to_string(id) + "/traj_generation_flag";
+            std::string flag_topic = "/uav17" + std::to_string(id) + "/traj_generation_flag";
             flag_subs[i] = nh.subscribe<std_msgs::Bool>(
                 flag_topic, 1, boost::bind(&FormationPlanner::flagCallback, this, _1, i));
 
@@ -60,6 +69,100 @@ public:
         if (msg->data.size() >= 3) {
             current_pos[index] << msg->data[0], msg->data[1], msg->data[2];
         }
+    }
+
+    void trajectoryRequestCallback(const std_msgs::String::ConstPtr& msg) {
+        int requested_choice = 0;
+
+        if (msg->data == "trajectory1") {
+            requested_choice = 1;
+        } else if (msg->data == "trajectory2") {
+            requested_choice = 2;
+        } else {
+            ROS_WARN("Unsupported /trajectory_request: %s. Use trajectory1 for circle, trajectory2 for figure-eight.",
+                     msg->data.c_str());
+            return;
+        }
+
+        if (trajectory_started && requested_choice == active_traj_choice) {
+            ROS_INFO("Trajectory request received again: %s. Current trajectory keeps running.",
+                     msg->data.c_str());
+            return;
+        }
+
+        pending_traj_choice = requested_choice;
+        trajectory_request_received = true;
+        trajectory_started = false;
+        ROS_INFO("Trajectory request received: %s, pending choice=%d", msg->data.c_str(), pending_traj_choice);
+        tryStartTrajectory();
+    }
+
+    Eigen::Matrix3d makeFrame(const Eigen::Vector3d& velocity) {
+        Eigen::Vector3d r1 = velocity.normalized();
+        Eigen::Vector3d r3(0.0, 0.0, 1.0);
+        Eigen::Vector3d r2 = r3.cross(r1);
+        Eigen::Matrix3d R;
+        R << r1, r2, r3;
+        return R;
+    }
+
+    void computeCircleMaster(double t, Eigen::Vector3d& pL, Eigen::Vector3d& vL,
+                             Eigen::Vector3d& aL, Eigen::Vector3d& jL) {
+        double theta = start_angle - omega * t;
+        double ct = cos(theta);
+        double st = sin(theta);
+
+        pL << circle_center.x() + radius * ct, circle_center.y() + radius * st, circle_center.z();
+        vL << radius * omega * st, -radius * omega * ct, 0.0;
+        aL << -radius * omega * omega * ct, -radius * omega * omega * st, 0.0;
+        jL << -radius * pow(omega, 3) * st, radius * pow(omega, 3) * ct, 0.0;
+    }
+
+    void computeEightMaster(double t, Eigen::Vector3d& pL, Eigen::Vector3d& vL,
+                            Eigen::Vector3d& aL, Eigen::Vector3d& jL) {
+        double theta = omega * t;
+        double st = sin(theta);
+        double ct = cos(theta);
+        double c2t = cos(2.0 * theta);
+
+        pL << d_offsets[0].x() + st,
+              d_offsets[0].y() + ct * st,
+              d_offsets[0].z();
+        vL << omega * ct,
+              omega * c2t,
+              0.0;
+        aL << -omega * omega * st,
+              -2.0 * omega * omega * sin(2.0 * theta),
+              0.0;
+        jL << -pow(omega, 3) * ct,
+              -4.0 * pow(omega, 3) * c2t,
+              0.0;
+    }
+
+    void computeMaster(double t, Eigen::Vector3d& pL, Eigen::Vector3d& vL,
+                       Eigen::Vector3d& aL, Eigen::Vector3d& jL) {
+        if (active_traj_choice == 2) {
+            computeEightMaster(t, pL, vL, aL, jL);
+        } else {
+            computeCircleMaster(t, pL, vL, aL, jL);
+        }
+    }
+
+    Eigen::Matrix3d computeFrame(double t) {
+        Eigen::Vector3d pL, vL, aL, jL;
+        computeMaster(t, pL, vL, aL, jL);
+        return makeFrame(vL);
+    }
+
+    void tryStartTrajectory() {
+        if (!all_ready || !trajectory_request_received || trajectory_started) {
+            return;
+        }
+
+        active_traj_choice = pending_traj_choice;
+        start_time = ros::Time::now().toSec();
+        trajectory_started = true;
+        ROS_INFO("Trajectory started: choice=%d, t reset to 0.", active_traj_choice);
     }
     
     void flagCallback(const std_msgs::Bool::ConstPtr& msg, int index) {
@@ -83,20 +186,20 @@ public:
                         radius = master_radius.head<2>().norm();
                         circle_center.z() = d_offsets[0].z();
 
-                        Eigen::Vector3d r1_0(sin(start_angle), -cos(start_angle), 0.0);
-                        Eigen::Vector3d r3_0(0.0, 0.0, 1.0);
-                        Eigen::Vector3d r2_0 = r3_0.cross(r1_0);
-                        Eigen::Matrix3d R0;
-                        R0 << r1_0, r2_0, r3_0;
+                        Eigen::Matrix3d circle_R0 = makeFrame(Eigen::Vector3d(radius * omega * sin(start_angle),
+                                                                               -radius * omega * cos(start_angle),
+                                                                               0.0));
+                        Eigen::Matrix3d eight_R0 = makeFrame(Eigen::Vector3d(omega, omega, 0.0));
                         for (int j = 0; j < 4; ++j) {
-                            formation_offsets[j] = R0.transpose() * (d_offsets[j] - d_offsets[0]);
+                            circle_formation_offsets[j] = circle_R0.transpose() * (d_offsets[j] - d_offsets[0]);
+                            eight_formation_offsets[j] = eight_R0.transpose() * (d_offsets[j] - d_offsets[0]);
                         }
                         all_ready = true;
-                        start_time = ros::Time::now().toSec();
                         ROS_INFO("ALL UAVS READY! Offsets recorded. Starting trajectory...");
                         ROS_INFO("Master starts from current position [%.3f, %.3f, %.3f], circle center=[%.3f, %.3f, %.3f], actual radius=%.3f, start_angle=%.3f",
                                  d_offsets[0].x(), d_offsets[0].y(), d_offsets[0].z(),
                                  circle_center.x(), circle_center.y(), circle_center.z(), radius, start_angle);
+                        tryStartTrajectory();
                     }
                 }
             }
@@ -104,42 +207,28 @@ public:
   
 
     void timerCallback(const ros::TimerEvent&) {
-        if (!all_ready) return;
+        if (!trajectory_started) return;
 
         double t = ros::Time::now().toSec() - start_time;
-        double theta = start_angle - omega * t;
-        double ct = cos(theta);
-        double st = sin(theta);
-    
-        Eigen::Vector3d pL(circle_center.x() + radius * ct, circle_center.y() + radius * st , circle_center.z());
-        Eigen::Vector3d vL(radius * omega * st, -radius * omega * ct, 0.0);
-        Eigen::Vector3d aL(-radius * omega * omega * ct, -radius * omega * omega * st, 0.0);
-        Eigen::Vector3d jL(-radius * pow(omega, 3) * st, radius * pow(omega, 3) * ct, 0.0);
-        
-        Eigen::Vector3d r1 = vL.normalized(); 
-        Eigen::Vector3d r3(0.0, 0.0, 1.0);     
-        Eigen::Vector3d r2 = r3.cross(r1);    
-    
-        
-        Eigen::Vector3d dr1(-omega * ct, -omega * st, 0.0);
-        Eigen::Vector3d ddr1(-omega * omega * st, omega * omega * ct, 0.0);
-        Eigen::Vector3d dddr1(omega * omega * omega * ct, omega * omega * omega * st, 0.0);
-    
-        Eigen::Vector3d dr3(0, 0, 0);
-        Eigen::Vector3d dr2 = r3.cross(dr1);
-        Eigen::Vector3d ddr2 = r3.cross(ddr1);
-        Eigen::Vector3d dddr2 = r3.cross(dddr1);
-    
-        Eigen::Matrix3d R_TI, dR_TI, ddR_TI, dddR_TI;
-        R_TI << r1, r2, r3;
-        dR_TI << dr1, dr2, dr3;
-        ddR_TI << ddr1, ddr2, dr3;
-        dddR_TI << dddr1, dddr2, dr3;
+        Eigen::Vector3d pL, vL, aL, jL;
+        computeMaster(t, pL, vL, aL, jL);
+
+        double h = 0.001;
+        Eigen::Matrix3d R_TI = computeFrame(t);
+        Eigen::Matrix3d Rp = computeFrame(t + h);
+        Eigen::Matrix3d Rm = computeFrame(t - h);
+        Eigen::Matrix3d Rpp = computeFrame(t + 2.0 * h);
+        Eigen::Matrix3d Rmm = computeFrame(t - 2.0 * h);
+        Eigen::Matrix3d dR_TI = (Rp - Rm) / (2.0 * h);
+        Eigen::Matrix3d ddR_TI = (Rp - 2.0 * R_TI + Rm) / (h * h);
+        Eigen::Matrix3d dddR_TI = (Rpp - 2.0 * Rp + 2.0 * Rm - Rmm) / (2.0 * h * h * h);
+        Eigen::Vector3d r1 = R_TI.col(0);
+        Eigen::Vector3d dr1 = dR_TI.col(0);
         
         for (int i = 0; i < 4; ++i) {
             sz_indoor_controller::TrajPoint msg_out;
 
-            Eigen::Vector3d formation_offset = formation_offsets[i];
+            Eigen::Vector3d formation_offset = active_traj_choice == 2 ? eight_formation_offsets[i] : circle_formation_offsets[i];
             Eigen::Vector3d pFi = pL + R_TI * formation_offset;
             Eigen::Vector3d dpFi = vL + dR_TI * formation_offset;
             Eigen::Vector3d ddpFi = aL + ddR_TI * formation_offset;
@@ -162,7 +251,7 @@ public:
             msg_out.d3pd.z = dddpFi.z();
 
             msg_out.yawd = atan2(r1.y(), r1.x());
-            msg_out.yawd_dot = omega;
+            msg_out.yawd_dot = r1.x() * dr1.y() - r1.y() * dr1.x();
 
             traj_pub[i].publish(msg_out);
         }
