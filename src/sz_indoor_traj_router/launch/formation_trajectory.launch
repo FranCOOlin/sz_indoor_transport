@@ -1,0 +1,10 @@
+<launch>
+    <arg name="omega" default="0.3" />
+
+    <node pkg="sz_indoor_traj_router"
+          type="trajectory_node"
+          name="formation_trajectory"
+          output="screen">
+        <param name="omega" value="$(arg omega)" />
+    </node>
+</launch>
