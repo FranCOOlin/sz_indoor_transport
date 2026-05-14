@@ -48,6 +48,34 @@
     <arg name="launch_monitor" default="true"/>
     <arg name="monitor_screen" default="true"/>
 
+    <!-- 中央轨迹链路：traj_router 接 GCS service，trajectory_node 生成编队轨迹点。 -->
+    <arg name="launch_traj_router" default="true"/>
+    <arg name="launch_trajectory_node" default="true"/>
+    <arg name="traj_router_output" default="screen"/>
+    <arg name="trajectory_node_output" default="screen"/>
+    <arg name="trajectory_omega" default="0.3"/>
+    <arg name="traj_router_uav_id" default="/$(arg master_id)"/>
+    <arg name="traj_router_landing_duration" default="5.0"/>
+
+    <node if="$(arg launch_traj_router)"
+          pkg="sz_indoor_traj_router"
+          type="traj_router.py"
+          name="traj_router"
+          output="$(arg traj_router_output)">
+        <param name="uav_id" value="$(arg traj_router_uav_id)"/>
+        <param name="target_height" value="$(arg takeoff_height)"/>
+        <param name="takeoff_duration" value="$(arg takeoff_duration)"/>
+        <param name="landing_duration" value="$(arg traj_router_landing_duration)"/>
+    </node>
+
+    <node if="$(arg launch_trajectory_node)"
+          pkg="sz_indoor_traj_router"
+          type="trajectory_node"
+          name="formation_trajectory"
+          output="$(arg trajectory_node_output)">
+        <param name="omega" value="$(arg trajectory_omega)"/>
+    </node>
+
     <include file="$(find sz_indoor_fsm)/launch/coop_fsm.launch">
         <arg name="role" value="gcs"/>
         <arg name="self_id" value="$(arg self_id)"/>

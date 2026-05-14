@@ -9,12 +9,13 @@ find_package(catkin REQUIRED COMPONENTS
   std_msgs
   geometry_msgs
   sz_indoor_controller
+  sz_indoor_fsm
 )
 
 find_package(Eigen3 REQUIRED)
 
 catkin_package(
-  CATKIN_DEPENDS roscpp rospy std_msgs geometry_msgs sz_indoor_controller
+  CATKIN_DEPENDS roscpp rospy std_msgs geometry_msgs sz_indoor_controller sz_indoor_fsm
 )
 
 include_directories(
@@ -74,14 +75,15 @@ target_link_libraries(trajectory_node
 catkin_install_python(PROGRAMS
 #   scripts/my_python_script
     scripts/traj_router.py
+    scripts/mock_multi_uav.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
 ## Mark executables for installation
 ## See http://docs.ros.org/melodic/api/catkin/html/howto/format1/building_executables.html
-# install(TARGETS ${PROJECT_NAME}_node
-#   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
-# )
+install(TARGETS trajectory_node
+  RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
 
 ## Mark libraries for installation
 ## See http://docs.ros.org/melodic/api/catkin/html/howto/format1/building_libraries.html
@@ -99,11 +101,9 @@ catkin_install_python(PROGRAMS
 # )
 
 ## Mark other files for installation (e.g. launch and bag files, etc.)
-# install(FILES
-#   # myfile1
-#   # myfile2
-#   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
-# )
+install(DIRECTORY launch/
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/launch
+)
 
 #############
 ## Testing ##

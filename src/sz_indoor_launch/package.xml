@@ -60,6 +60,7 @@
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>sz_indoor_controller</exec_depend>
   <exec_depend>sz_indoor_fsm</exec_depend>
+  <exec_depend>sz_indoor_traj_router</exec_depend>
 
 
   <!-- The export tag contains other, unspecified, tags -->

@@ -1,0 +1,58 @@
+<launch>
+    <!-- GCS + traj_router + trajectory_node 联调：用 mock_multi_uav 模拟多机端。 -->
+
+    <!-- trajectory_node 当前源码硬编码 uav170/uav171/uav173/uav174，因此默认用这 4 台。 -->
+    <arg name="participants" default="uav170,uav171,uav173,uav174"/>
+    <arg name="master_id" default="uav170"/>
+    <arg name="run_id" default="coop_lift_test_001"/>
+
+    <arg name="takeoff_height" default="3.0"/>
+    <arg name="takeoff_duration" default="6.0"/>
+    <arg name="land_reset_delay" default="5.0"/>
+    <arg name="trajectory_omega" default="0.3"/>
+
+    <!-- 调试时默认启动完整 GCS 侧链路和 Rich 操作台。 -->
+    <arg name="launch_monitor" default="true"/>
+    <arg name="launch_traj_router" default="true"/>
+    <arg name="launch_trajectory_node" default="true"/>
+
+    <!-- mock 行为参数。 -->
+    <arg name="mock_publish_rate_hz" default="50.0"/>
+    <arg name="mock_prepared_delay" default="1.0"/>
+    <arg name="mock_achieve_delay" default="1.0"/>
+    <arg name="mock_follow_duration" default="8.0"/>
+    <arg name="mock_auto_stop" default="true"/>
+
+    <include file="$(find sz_indoor_launch)/launch/coop_gcs.launch">
+        <arg name="participants" value="$(arg participants)"/>
+        <arg name="master_id" value="$(arg master_id)"/>
+        <arg name="run_id" value="$(arg run_id)"/>
+        <arg name="takeoff_height" value="$(arg takeoff_height)"/>
+        <arg name="takeoff_duration" value="$(arg takeoff_duration)"/>
+        <arg name="land_reset_delay" value="$(arg land_reset_delay)"/>
+        <arg name="launch_monitor" value="$(arg launch_monitor)"/>
+        <arg name="launch_traj_router" value="$(arg launch_traj_router)"/>
+        <arg name="launch_trajectory_node" value="$(arg launch_trajectory_node)"/>
+        <arg name="trajectory_omega" value="$(arg trajectory_omega)"/>
+        <arg name="traj_router_uav_id" value="/$(arg master_id)"/>
+    </include>
+
+    <node pkg="sz_indoor_traj_router"
+          type="mock_multi_uav.py"
+          name="mock_multi_uav"
+          output="screen">
+        <param name="participants" value="$(arg participants)"/>
+        <param name="run_id" value="$(arg run_id)"/>
+        <param name="takeoff_height" value="$(arg takeoff_height)"/>
+        <param name="takeoff_duration" value="$(arg takeoff_duration)"/>
+        <param name="publish_rate_hz" value="$(arg mock_publish_rate_hz)"/>
+        <param name="prepared_delay" value="$(arg mock_prepared_delay)"/>
+        <param name="achieve_delay" value="$(arg mock_achieve_delay)"/>
+        <param name="follow_duration" value="$(arg mock_follow_duration)"/>
+        <param name="auto_stop" value="$(arg mock_auto_stop)"/>
+        <!-- traj_router.py 发 main_trajectory；trajectory_node 当前接受 trajectory1/trajectory2。 -->
+        <param name="bridge_trajectory_request" value="true"/>
+        <param name="rewrite_request_from" value="main_trajectory"/>
+        <param name="rewrite_request_to" value="trajectory1"/>
+    </node>
+</launch>

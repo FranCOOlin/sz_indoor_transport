@@ -14,5 +14,6 @@
   <depend>std_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>sz_indoor_controller</depend>
+  <depend>sz_indoor_fsm</depend>
 
 </package>

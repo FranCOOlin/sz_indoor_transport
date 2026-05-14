@@ -5,24 +5,23 @@ import json
 import rospy
 from std_msgs.msg import String, Float64MultiArray, Bool
 from sz_indoor_fsm.srv import JsonCommand, JsonCommandResponse
-from test_controller.msg import TrajPoint
+from sz_indoor_controller.msg import TrajPoint
 
 
 class TrajRouterNode:
     """
-    ¹ì¼£Â·ÓÉÆ÷½Úµã - ¶Ô½Ó GCS FSM
+    è½¨è¿¹è·¯ç”±å™¨èŠ‚ç‚¹ - å¯¹æ¥ GCS FSM
     """
-    
     def __init__(self):
         rospy.init_node('traj_router', anonymous=True)
         
-        # ²ÎÊıÅäÖÃ
+        # å‚æ•°é…ç½®
         self.takeoff_duration = rospy.get_param("~takeoff_duration", 6.0)
         self.landing_duration = rospy.get_param("~landing_duration", 5.0)
         self.target_height = rospy.get_param("~target_height", 1.0)
         self.uav_id = rospy.get_param("~uav_id", "/uav1")
         
-        # ×´Ì¬¶¨Òå
+        # çŠ¶æ€å®šä¹‰
         self.STATE_IDLE = "idle"
         self.STATE_TAKEOFF = "takeoff"
         self.STATE_HOVER = "hover"
@@ -32,43 +31,43 @@ class TrajRouterNode:
         self.current_state = self.STATE_IDLE
         self.state_start_time = rospy.Time.now()
         
-        # ÊµÊ±Î»ÖÃ
+        # å®æ—¶ä½ç½®
         self.current_x = 0.0
         self.current_y = 0.0
         self.current_z = 0.0
         
-        # Ëø¶¨Î»ÖÃ
+        # é”å®šä½ç½®
         self.lock_x = 0.0
         self.lock_y = 0.0
         self.lock_z = 0.0
         
-        # ÔÊĞí¹ì¼£½ÓÊÕ±êÖ¾
+        # å…è®¸è½¨è¿¹æ¥æ”¶æ ‡å¿—
         self.trajectory_active = False
         self.last_point_time = rospy.Time.now()
         self.trajectory_started = False
         
-        # ========== ÏòÏÂ¶Ë¿Ú ==========
+        # ========== å‘ä¸‹ç«¯å£ ==========
         self.trajectory_request_pub = rospy.Publisher('/trajectory_request', String, queue_size=10)
         self.flag_pub = rospy.Publisher(self.uav_id + '/traj_generation_flag', Bool, queue_size=10)
         
-        # ========== ´ÓÏÂ¶Ë¿Ú½ÓÊÕ¹ì¼£ ==========
+        # ========== ä»ä¸‹ç«¯å£æ¥æ”¶è½¨è¿¹ ==========
         traj_topic = self.uav_id + "/planning/traj_point"
         rospy.Subscriber(traj_topic, TrajPoint, self.trajectory_data_callback)
         
-        # ========== »ñÈ¡µ±Ç°Î»ÖÃ ==========
+        # ========== è·å–å½“å‰ä½ç½® ==========
         quadrotor_state_topic = self.uav_id + "/quadrotor_state"
         rospy.Subscriber(quadrotor_state_topic, Float64MultiArray, self.quadrotor_state_callback)
         
-        # ========== ·¢²¼¹ì¼£¸øÖ´ĞĞ»ú¹¹ ==========
+        # ========== å‘å¸ƒè½¨è¿¹ç»™æ‰§è¡Œæœºæ„ ==========
         self.trajectory_pub = rospy.Publisher(self.uav_id + "/trajectory", TrajPoint, queue_size=10)
         
-        # ========== ÏòÉÏ¶Ë¿Ú service ==========
+        # ========== å‘ä¸Šç«¯å£ service ==========
         self.server = rospy.Service('/traj_router/command', JsonCommand, self.handle_command)
         
-        # ========== ºÏ²¢µÄ¶¨Ê±Æ÷£¨200Hz£© ==========
+        # ========== åˆå¹¶çš„å®šæ—¶å™¨ï¼ˆ200Hzï¼‰ ==========
         rospy.Timer(rospy.Duration(0.005), self.main_timer_callback)
         
-        rospy.loginfo("Traj Router ÒÑÆô¶¯")
+        rospy.loginfo("Traj Router å·²å¯åŠ¨")
     
     def quadrotor_state_callback(self, msg):
         if len(msg.data) >= 3:
@@ -77,7 +76,7 @@ class TrajRouterNode:
             self.current_z = msg.data[2]
     
     def handle_command(self, req):
-        """´¦Àí GCS ·¢À´µÄÃüÁî"""
+        """å¤„ç† GCS å‘æ¥çš„å‘½ä»¤"""
         try:
             payload = json.loads(req.json)
         except Exception as e:
@@ -85,7 +84,7 @@ class TrajRouterNode:
         
         cmd = payload.get("cmd", "")
         
-        rospy.loginfo("[ÃüÁî] cmd=%s", cmd)
+        rospy.loginfo("[å‘½ä»¤] cmd=%s", cmd)
         
         if cmd == "takeoff":
             return self.handle_takeoff(payload)
@@ -143,7 +142,7 @@ class TrajRouterNode:
             return
         
         if not self.trajectory_started:
-            rospy.loginfo("ÊÕµ½µÚÒ»¸ö¹ì¼£µã£¬ÇĞ»»µ½ traj_following")
+            rospy.loginfo("æ”¶åˆ°ç¬¬ä¸€ä¸ªè½¨è¿¹ç‚¹ï¼Œåˆ‡æ¢åˆ° traj_following")
             self.transition_to_state(self.STATE_TRAJ_FOLLOWING)
             self.trajectory_started = True
         
@@ -155,7 +154,7 @@ class TrajRouterNode:
         if new_state == self.current_state:
             return
         
-        rospy.loginfo("[×´Ì¬] %s -> %s", self.current_state, new_state)
+        rospy.loginfo("[çŠ¶æ€] %s -> %s", self.current_state, new_state)
         
         if new_state in [self.STATE_HOVER, self.STATE_TAKEOFF, self.STATE_LANDING]:
             self.lock_x = self.current_x
@@ -213,12 +212,12 @@ class TrajRouterNode:
         return traj
     
     def main_timer_callback(self, event):
-        """Ö÷¶¨Ê±Æ÷£º200Hz£¬¸ù¾İ×´Ì¬·¢²¼¹ì¼£µã + ×´Ì¬¸üĞÂ"""
+        """ä¸»å®šæ—¶å™¨ï¼š200Hzï¼Œæ ¹æ®çŠ¶æ€å‘å¸ƒè½¨è¿¹ç‚¹ + çŠ¶æ€æ›´æ–°"""
         current_time = rospy.Time.now()
         elapsed = (current_time - self.state_start_time).to_sec()
         since_last_point = (current_time - self.last_point_time).to_sec()
         
-        # ========== ¸ù¾İ×´Ì¬·¢²¼¹ì¼£µã ==========
+        # ========== æ ¹æ®çŠ¶æ€å‘å¸ƒè½¨è¿¹ç‚¹ ==========
         if self.current_state == self.STATE_TAKEOFF:
             point = self.set_height(elapsed, self.takeoff_duration, 
                                      self.lock_x, self.lock_y, self.target_height)
@@ -244,7 +243,7 @@ class TrajRouterNode:
             point.yawd_dot = 0.0
             self.trajectory_pub.publish(point)
         
-        # ========== ×´Ì¬¸üĞÂÂß¼­ ==========
+        # ========== çŠ¶æ€æ›´æ–°é€»è¾‘ ==========
         if self.current_state == self.STATE_TAKEOFF:
             if elapsed >= self.takeoff_duration + 2.0:
                 self.transition_to_state(self.STATE_HOVER)
@@ -255,7 +254,7 @@ class TrajRouterNode:
         
         elif self.current_state == self.STATE_TRAJ_FOLLOWING:
             if self.trajectory_started and since_last_point > 0.1:
-                rospy.logwarn("¹ì¼£ÖĞ¶Ï£¬¿ªÊ¼½µÂä")
+                rospy.logwarn("è½¨è¿¹ä¸­æ–­ï¼Œå¼€å§‹é™è½")
                 self.trajectory_active = False
                 self.transition_to_state(self.STATE_LANDING)
     
