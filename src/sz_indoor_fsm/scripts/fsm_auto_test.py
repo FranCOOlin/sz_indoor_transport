@@ -1,6 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+Automatic / semi-automatic integration test for coop_fsm.
+
+This node is a test harness, not a flight node. It replaces the pieces that are
+normally outside the FSM so the state machine can be tested on a laptop:
+
+- fake /traj_router/command JsonCommand service
+- fake UAVState streams for each participant
+- optional fake RCIn pulses for fully automatic testing
+
+Modes:
+- manual_operator=false: pulse fake RC takeoff/land channels automatically.
+- manual_operator=true: wait for the user to press t/l in the Rich GCS console.
+"""
+
 import json
 import sys
 from typing import Any, Dict, List
@@ -38,7 +53,11 @@ def json_loads(text: str) -> Dict[str, Any]:
 
 
 class FSMAutoTest:
+    """Black-box test driver that talks only through public ROS interfaces."""
+
     def __init__(self):
+        # Topic/service names are configurable so the same harness can test
+        # different namespace layouts without editing code.
         self.run_id = str(rospy.get_param("~run_id", "coop_lift_test_001"))
         self.participants = parse_csv(rospy.get_param("~participants", "uav0,uav1"))
         self.state_topic_template = str(
@@ -62,6 +81,8 @@ class FSMAutoTest:
         self.test_timeout = float(rospy.get_param("~test_timeout", 60.0))
         self.manual_operator = bool(rospy.get_param("~manual_operator", False))
 
+        # RC channel numbers are 1-based, matching transmitter labels and FSM
+        # parameters. The message array is filled in _publish_rc().
         self.rc_takeoff_channel = int(rospy.get_param("~rc_takeoff_channel", 12))
         self.rc_takeoff_high = int(rospy.get_param("~rc_takeoff_high", 1900))
         self.rc_land_channel = int(rospy.get_param("~rc_land_channel", 5))
@@ -82,6 +103,8 @@ class FSMAutoTest:
         )
         rospy.Subscriber(self.status_topic, String, self._gcs_status_cb, queue_size=20)
 
+        # Fake world state. Altitude is a linear ramp in takeoff/land; that is
+        # enough to exercise the same FSM conditions as real UAVState feedback.
         self.gcs_status = {}
         self.gcs_state_history = []
         self.altitudes = {uav_id: 0.0 for uav_id in self.participants}
@@ -112,6 +135,11 @@ class FSMAutoTest:
         )
 
     def _traj_router_cb(self, req):
+        """Fake traj_router service.
+
+        The real traj_router should accept the same command names. This fake
+        implementation just changes the simulated mode used by _publish_states().
+        """
         payload = json_loads(req.json)
         if payload.get("run_id", self.run_id) != self.run_id:
             return JsonCommandResponse(False, "run_id mismatch")
@@ -151,6 +179,7 @@ class FSMAutoTest:
         return JsonCommandResponse(False, f"unknown cmd {cmd}")
 
     def _gcs_status_cb(self, msg: String):
+        """Observe GCS state changes and keep a history for pass/fail logging."""
         payload = json_loads(msg.data)
         if not payload:
             return
@@ -163,6 +192,7 @@ class FSMAutoTest:
             self.seen_land = True
 
     def _call_gcs_event(self, event: str, extra=None):
+        """Send a fake external event to GCS, such as traj_router stop."""
         payload = {
             "cmd": event,
             "event": event,
@@ -183,6 +213,7 @@ class FSMAutoTest:
             return False
 
     def _publish_states(self):
+        """Publish fake UAVState for every participant."""
         t = now_sec()
         if t - self.last_state_pub_time < 1.0 / max(self.state_pub_rate_hz, 1e-6):
             return
@@ -204,6 +235,7 @@ class FSMAutoTest:
             pub.publish(msg)
 
     def _publish_rc(self):
+        """Publish fake RCIn; in automatic mode this includes short pulses."""
         t = now_sec()
         if t - self.last_rc_pub_time < 1.0 / max(self.rc_pub_rate_hz, 1e-6):
             return
@@ -218,6 +250,7 @@ class FSMAutoTest:
         self.rc_pub.publish(msg)
 
     def _drive_test(self):
+        """Drive the test and decide when it passes or times out."""
         t = now_sec()
         gcs_state = str(self.gcs_status.get("state", ""))
         all_prepared = bool(self.gcs_status.get("all_prepared", False))
@@ -265,6 +298,7 @@ class FSMAutoTest:
             sys.exit(2)
 
     def spin(self):
+        """Main test loop."""
         rate = rospy.Rate(50.0)
         while not rospy.is_shutdown():
             self._publish_states()

@@ -1,6 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+Rich terminal console for the cooperative FSM.
+
+The monitor is intentionally separate from fsm.py:
+- fsm.py publishes machine-readable JSON status and service audit topics.
+- fsm_monitor.py renders those topics as a human dashboard.
+- key presses are sent to GCS through /gcs/fsm/operator, so operator input is
+  visible in service_audit and can be replayed/debugged.
+
+Default keys:
+    t: request takeoff
+    l: request land
+    a: request abort
+    r: request reset
+"""
+
 import json
 import select
 import sys
@@ -46,6 +62,8 @@ def json_dumps(payload: Dict[str, Any]) -> str:
 
 
 class KeyboardReader(threading.Thread):
+    """Non-blocking keyboard reader used by the Rich console."""
+
     def __init__(self):
         super().__init__(daemon=True)
         self.enabled = bool(sys.stdin and sys.stdin.isatty())
@@ -82,7 +100,12 @@ class KeyboardReader(threading.Thread):
 
 
 class FSMMonitor:
+    """Subscribe to FSM status/audit topics and render an interactive console."""
+
     def __init__(self):
+        # screen=True uses Rich's alternate screen buffer. It keeps the table
+        # from leaving many frames in scrollback when no other node writes to
+        # the same terminal.
         self.console = Console()
         self.screen = bool(rospy.get_param("~screen", False))
         self.refresh_hz = float(rospy.get_param("~refresh_hz", 4.0))
@@ -95,12 +118,17 @@ class FSMMonitor:
         participants = parse_csv(rospy.get_param("~participants", ""))
         include_gcs = bool(rospy.get_param("~include_gcs", True))
 
+        # Status topics contain the latest state, health, RC, and prepared /
+        # achieved sets. If explicit ~status_topics is omitted, infer the common
+        # /gcs and /<uav_id> names from participants.
         topics = parse_csv(rospy.get_param("~status_topics", ""))
         if not topics:
             if include_gcs:
                 topics.append("/gcs/fsm/status")
             topics.extend([f"/{uav_id}/fsm/status" for uav_id in participants])
 
+        # Audit topics mirror service traffic into rosbag-recordable String
+        # messages. This is why service calls show up in Recent Events.
         audit_topics = parse_csv(rospy.get_param("~audit_topics", ""))
         if not audit_topics:
             if include_gcs:
@@ -124,6 +152,7 @@ class FSMMonitor:
         rospy.loginfo("[fsm_monitor] watching audit topics: %s", ", ".join(audit_topics))
 
     def _status_cb(self, msg: String, topic: str):
+        """Update one row of the main status table."""
         try:
             payload = json.loads(msg.data)
         except Exception:
@@ -140,6 +169,7 @@ class FSMMonitor:
             self._add_event(f"{name} -> {state}")
 
     def _audit_cb(self, msg: String, topic: str):
+        """Append a concise service-audit line to Recent Events."""
         try:
             payload = json.loads(msg.data)
         except Exception:
@@ -155,10 +185,12 @@ class FSMMonitor:
         self._add_event(f"{node} {direction} {service_leaf} {cmd} {marker}")
 
     def _add_event(self, text: str):
+        """Store one recent event with a timestamp."""
         stamp = rospy.Time.now().to_sec()
         self.events.append((stamp, text))
 
     def _style_state(self, state: str) -> str:
+        """Color important states for quick scanning."""
         if state == "ABORT":
             return f"[bold red]{state}[/bold red]"
         if state == "LAND":
@@ -170,6 +202,7 @@ class FSMMonitor:
         return state
 
     def _render_status_table(self):
+        """Render the main per-node status table."""
         table = Table(
             title=f"SZ Indoor Transport FSM  [{self.last_command}]",
             expand=True,
@@ -227,6 +260,7 @@ class FSMMonitor:
         return table
 
     def _render_gcs_info(self):
+        """Render the GCS-specific operator summary panel."""
         gcs = self.rows.get("gcs", {})
         takeoff = gcs.get("takeoff", {}) or {}
         rc = gcs.get("rc", {}) or {}
@@ -258,6 +292,7 @@ class FSMMonitor:
         return Panel(info, title="GCS Info", expand=True)
 
     def _render_events(self):
+        """Render state changes and service audit events."""
         table = Table(title="Recent Events", expand=True)
         table.add_column("Age", justify="right", no_wrap=True)
         table.add_column("Event")
@@ -267,6 +302,7 @@ class FSMMonitor:
         return table
 
     def _render(self):
+        """Compose all dashboard sections into one Rich renderable."""
         return Group(
             self._render_status_table(),
             self._render_gcs_info(),
@@ -274,6 +310,7 @@ class FSMMonitor:
         )
 
     def _send_operator_command(self, cmd: str):
+        """Send one operator command to the GCS FSM."""
         payload = {
             "cmd": cmd,
             "event": cmd,
@@ -294,6 +331,7 @@ class FSMMonitor:
             self._add_event(f"operator {cmd} failed: {exc}")
 
     def _handle_keys(self):
+        """Translate local key presses into operator commands."""
         if not self.keyboard:
             return
         for key in self.keyboard.pop_all():
@@ -307,6 +345,7 @@ class FSMMonitor:
                 self._send_operator_command("reset")
 
     def spin(self):
+        """Main Rich refresh loop."""
         rate = rospy.Rate(max(self.refresh_hz, 0.5))
         try:
             with Live(

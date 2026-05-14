@@ -1,13 +1,53 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+Cooperative lift task finite-state machine.
+
+This node intentionally keeps all high-level mission decisions in one Python
+file so it is easy to inspect and modify during flight-test iteration.
+
+Roles
+-----
+GCS:
+    Central coordinator. It collects prepared/achieve events from UAV FSMs,
+    sends JSON service commands to traj_router and UAVs, and waits for operator
+    takeoff/land confirmation.
+
+MASTER / SLAVE:
+    Per-UAV task FSM. Each UAV checks its own UAVState stream, reports
+    prepared/achieve to GCS, accepts state-change commands from GCS, and owns
+    the local forced-landing hook for ABORT.
+
+Where to add custom behavior
+----------------------------
+The safest extension points are near the bottom of CoopFSM:
+
+    1. on_enter_<state>() hooks
+       Called once immediately after a state transition.
+       Use these for one-shot operations such as switching a controller mode,
+       arming a subsystem, latching a trajectory id, or notifying another node.
+
+    2. on_tick_<state>() hooks
+       Called every control tick while the FSM remains in that state.
+       Use these for periodic state-specific work such as publishing a hold
+       command, checking an external condition, or feeding a watchdog.
+
+    3. force_land()
+       The reserved interface for ABORT forced landing. The current version
+       only logs; wire your real landing/kill/RTL interface there.
+
+Core transition logic is in _tick_gcs() and _tick_uav(). Try to keep those
+methods focused on deciding *when to change state*. Put side effects in the
+hooks above unless the side effect is itself the transition command.
+"""
+
 import json
 import math
 import select
 import sys
 import termios
 import threading
-import time
 import tty
 from collections import deque
 from typing import Any, Dict, List, Optional
@@ -21,6 +61,8 @@ from sz_indoor_fsm.srv import JsonCommand, JsonCommandResponse
 
 
 PREPARE = "PREPARE"
+# GCS-only wait state: GCS has skipped its own checks and is waiting for UAVs
+# to report prepared, then operator confirmation to start takeoff.
 WAIT_TAKEOFF = "WAIT_TAKEOFF"
 TAKEOFF_RUNNING = "TAKEOFF_RUNNING"
 ACHIEVE = "ACHIEVE"
@@ -36,6 +78,7 @@ ROLE_SLAVE = "slave"
 
 
 def now_sec() -> float:
+    """Return ROS time as seconds. Keeping this wrapped makes tests/stubs easier."""
     return rospy.Time.now().to_sec()
 
 
@@ -64,6 +107,13 @@ def json_loads(text: str) -> Optional[Dict[str, Any]]:
 
 
 class KeyboardReader(threading.Thread):
+    """Small non-blocking stdin reader.
+
+    This is used only when the FSM itself is launched in an interactive
+    terminal. In normal GCS operation the Rich monitor calls the operator
+    service instead, so FSM logging and keyboard handling can be separated.
+    """
+
     def __init__(self):
         super().__init__(daemon=True)
         self.enabled = bool(sys.stdin and sys.stdin.isatty())
@@ -100,7 +150,19 @@ class KeyboardReader(threading.Thread):
 
 
 class CoopFSM:
+    """Role-aware cooperative FSM.
+
+    The class is deliberately not split into many subclasses yet. Most flight
+    test changes need to see GCS/UAV behavior side-by-side, and role branching is
+    still small enough to keep readable in one file.
+    """
+
     def __init__(self):
+        # ------------------------------------------------------------------
+        # Identity and run scoping
+        # ------------------------------------------------------------------
+        # run_id is included in all JSON service payloads. It prevents stale
+        # events from an old test run being accepted by a newly launched FSM.
         self.role = str(rospy.get_param("~role", ROLE_SLAVE)).lower().strip()
         if self.role not in [ROLE_GCS, ROLE_MASTER, ROLE_SLAVE]:
             raise RuntimeError("~role must be one of: gcs, master, slave")
@@ -117,11 +179,19 @@ class CoopFSM:
             self.participants = [self.master_id]
         self.participants = [p for p in self.participants if p and p != "gcs"]
 
+        # ------------------------------------------------------------------
+        # Loop and status publishing rates
+        # ------------------------------------------------------------------
         self.control_rate_hz = float(rospy.get_param("~control_rate_hz", 30.0))
         self.status_rate_hz = float(rospy.get_param("~status_rate_hz", 5.0))
         self.status_pub_period = 1.0 / max(self.status_rate_hz, 1e-6)
         self.last_status_pub_time = 0.0
 
+        # ------------------------------------------------------------------
+        # Mission timing and thresholds
+        # ------------------------------------------------------------------
+        # takeoff_duration is sent to traj_router and also used as a fallback
+        # achieve timeout if height feedback is unavailable or delayed.
         self.takeoff_height = float(rospy.get_param("~takeoff_height", 3.0))
         self.takeoff_duration = float(rospy.get_param("~takeoff_duration", 6.0))
         self.takeoff_reached_tolerance = float(
@@ -133,6 +203,12 @@ class CoopFSM:
         self.land_reset_delay = float(rospy.get_param("~land_reset_delay", 5.0))
         self.service_timeout = float(rospy.get_param("~service_timeout", 0.3))
 
+        # ------------------------------------------------------------------
+        # UAV health check from sz_indoor_controller/UAVState
+        # ------------------------------------------------------------------
+        # The default topic follows the simulator/observer convention found in
+        # this workspace. Override ~uav_state_topic if your real estimator
+        # publishes UAVState somewhere else.
         self.health_topic = str(
             rospy.get_param("~uav_state_topic", f"/{self.self_id}/quadrotor_feedback")
         )
@@ -146,6 +222,15 @@ class CoopFSM:
             rospy.get_param("~attitude_norm_tolerance", 0.25)
         )
 
+        # ------------------------------------------------------------------
+        # JSON service interfaces
+        # ------------------------------------------------------------------
+        # gcs_event_service:
+        #   UAV/traj_router -> GCS event ingress, e.g. prepared/achieve/stop.
+        # operator_service:
+        #   Rich monitor / terminal UI -> GCS operator commands.
+        # command_service:
+        #   GCS -> this UAV command ingress, e.g. traj_following/land/abort.
         self.gcs_event_service = str(
             rospy.get_param("~gcs_event_service", "/gcs/fsm/event")
         )
@@ -168,6 +253,12 @@ class CoopFSM:
             rospy.get_param("~send_takeoff_started_to_uavs", True)
         )
 
+        # ------------------------------------------------------------------
+        # Topics for observability and replay
+        # ------------------------------------------------------------------
+        # status_topic feeds the Rich dashboard. service_audit_topic mirrors
+        # service requests/responses into rosbag-recordable String messages,
+        # because ROS1 rosbag cannot directly record service calls.
         self.status_topic = str(
             rospy.get_param(
                 "~status_topic",
@@ -191,6 +282,11 @@ class CoopFSM:
             )
         )
 
+        # ------------------------------------------------------------------
+        # Local keyboard and master RC input
+        # ------------------------------------------------------------------
+        # RC channel numbers are 1-based, matching RC transmitter labels.
+        # Internally _rc_value() converts them to zero-based array indices.
         self.enable_keyboard = bool(rospy.get_param("~enable_keyboard", True))
         self.key_takeoff = str(rospy.get_param("~key_takeoff", "t"))
         self.key_land = str(rospy.get_param("~key_land", "l"))
@@ -212,6 +308,9 @@ class CoopFSM:
             rospy.get_param("~rc_abort_direction", "above")
         ).lower().strip()
 
+        # ------------------------------------------------------------------
+        # Runtime state
+        # ------------------------------------------------------------------
         self.state = PREPARE
         self.prev_state = ""
         self.state_enter_time = now_sec()
@@ -240,6 +339,9 @@ class CoopFSM:
         self.current_uav_state_valid = False
         self.current_uav_state_invalid_reason = "no_message"
 
+        # ------------------------------------------------------------------
+        # ROS publishers, subscribers, and services
+        # ------------------------------------------------------------------
         self.status_pub = rospy.Publisher(self.status_topic, String, queue_size=10)
         self.service_audit_pub = rospy.Publisher(
             self.service_audit_topic, String, queue_size=50
@@ -276,6 +378,11 @@ class CoopFSM:
         )
 
     def _set_state(self, new_state: str, reason: str = ""):
+        """Change FSM state and run state-entry side effects.
+
+        Keep transition bookkeeping here so every transition updates age,
+        prev_state, logs, timers, and extension hooks consistently.
+        """
         if new_state == self.state:
             return
         old_state = self.state
@@ -296,6 +403,7 @@ class CoopFSM:
             self.land_start_time = now_sec()
         elif new_state == ABORT:
             self.force_land(reason or "abort", {})
+        self._on_enter_state(new_state, old_state, reason)
 
     def _rc_cb(self, msg: RCIn):
         self.last_rc_time = now_sec()
@@ -313,6 +421,16 @@ class CoopFSM:
         )
 
     def _uav_state_msg_valid(self, msg: UAVState):
+        """Validate the semantic content of UAVState.
+
+        Current default checks:
+        - position and velocity are finite numbers
+        - optional attitude quaternion is finite and near unit norm
+
+        If you later add fields to UAVState, extend this function with the
+        additional validity rules. This is the place that corresponds to the
+        TODO you mentioned before.
+        """
         position_values = [msg.position.x, msg.position.y, msg.position.z]
         velocity_values = [msg.velocity.x, msg.velocity.y, msg.velocity.z]
         if not finite(position_values + velocity_values):
@@ -343,6 +461,14 @@ class CoopFSM:
         return fresh and self._health_rate() >= self.health_min_rate_hz and self.current_uav_state_valid
 
     def _event_service_cb(self, req):
+        """GCS service callback for external mission events.
+
+        Expected event values:
+        - prepared: a UAV passed self-check and is ready for the takeoff phase.
+        - achieve: a UAV reached takeoff height/time condition.
+        - stop: traj_router reports the main trajectory is finished.
+        - abort: any node reports an emergency abort.
+        """
         payload = json_loads(req.json)
         if payload is None:
             self._audit_service("in", self.gcs_event_service, {}, False, "invalid json object")
@@ -375,6 +501,7 @@ class CoopFSM:
         return JsonCommandResponse(False, f"unknown event: {event}")
 
     def _command_service_cb(self, req):
+        """UAV service callback for commands sent by GCS."""
         payload = json_loads(req.json)
         if payload is None:
             self._audit_service("in", self.command_service, {}, False, "invalid json object")
@@ -409,6 +536,12 @@ class CoopFSM:
         return JsonCommandResponse(False, f"unknown cmd: {cmd}")
 
     def _operator_service_cb(self, req):
+        """GCS operator command service.
+
+        The Rich terminal monitor calls this service when the user presses
+        t/l/a/r. Keeping operator input as a service avoids mixing dashboard
+        rendering with mission transition logic.
+        """
         payload = json_loads(req.json)
         if payload is None:
             self._audit_service("in", self.operator_service, {}, False, "invalid json object")
@@ -457,6 +590,7 @@ class CoopFSM:
         return payload
 
     def _call_json_service(self, service_name: str, payload: Dict[str, Any]) -> bool:
+        """Call a JsonCommand service and mirror the result to service_audit."""
         try:
             rospy.wait_for_service(service_name, timeout=self.service_timeout)
             resp = rospy.ServiceProxy(service_name, JsonCommand)(json_dumps(payload))
@@ -490,6 +624,7 @@ class CoopFSM:
         success: Optional[bool],
         message: str,
     ):
+        """Publish a rosbag-friendly audit record for each JSON service call."""
         audit = {
             "stamp": now_sec(),
             "run_id": self.run_id,
@@ -505,6 +640,7 @@ class CoopFSM:
         self.service_audit_pub.publish(String(json_dumps(audit)))
 
     def _send_gcs_event(self, event: str, extra: Optional[Dict[str, Any]] = None) -> bool:
+        """Send one UAV/traj event to GCS."""
         payload = self._make_payload(
             event,
             {
@@ -517,14 +653,17 @@ class CoopFSM:
         return self._call_json_service(self.gcs_event_service, payload)
 
     def _send_to_traj_router(self, cmd: str, extra: Optional[Dict[str, Any]] = None) -> bool:
+        """Send one high-level command to the central traj_router service."""
         return self._call_json_service(self.traj_router_service, self._make_payload(cmd, extra))
 
     def _send_to_uav(self, uav_id: str, cmd: str, extra: Optional[Dict[str, Any]] = None) -> bool:
+        """Send one command to a specific UAV FSM."""
         service = self.uav_command_service_template.format(uav_id=uav_id)
         payload = self._make_payload(cmd, {"target": uav_id, **(extra or {})})
         return self._call_json_service(service, payload)
 
     def _broadcast_to_uavs(self, cmd: str, extra: Optional[Dict[str, Any]] = None):
+        """Send the same command to every participant listed in ~participants."""
         for uav_id in self.participants:
             self._send_to_uav(uav_id, cmd, extra)
 
@@ -604,6 +743,12 @@ class CoopFSM:
         return "abort" in keyboard_commands or self._abort_active()
 
     def _enter_abort(self, reason: str, payload: Optional[Dict[str, Any]] = None):
+        """Latch ABORT and fan it out to all relevant nodes.
+
+        ABORT is intentionally sticky; it does not reset itself after a timer.
+        This prevents a real emergency landing path from accidentally rearming
+        the nominal mission flow.
+        """
         if self.state == ABORT:
             return
         self.abort_reason = reason
@@ -616,6 +761,16 @@ class CoopFSM:
             self._send_gcs_event("abort", {"reason": reason})
 
     def force_land(self, reason: str, payload: Dict[str, Any]):
+        """Reserved forced-landing hook for UAV roles.
+
+        Put the real forced landing operation here, for example:
+        - call a MAVROS mode/land service
+        - publish a controller emergency command
+        - call your low-level safety node
+
+        This function is called when the local UAV FSM enters ABORT. GCS does
+        not execute local landing here; it broadcasts abort to traj_router/UAVs.
+        """
         if self.is_gcs:
             return
         rospy.logerr(
@@ -625,7 +780,151 @@ class CoopFSM:
             payload,
         )
 
+    # ==================================================================
+    # User extension hooks
+    # ==================================================================
+    # These hooks are intentionally no-op in the base implementation. They
+    # are the recommended places for experiment-specific code:
+    #
+    #   - on_enter_*: one-shot work when a state is entered.
+    #   - on_tick_* : periodic work while the FSM remains in a state.
+    #
+    # Examples:
+    #   - switch a controller mode when entering TRAJ_FOLLOWING
+    #   - publish a hold command every tick in WAIT
+    #   - send a hardware trigger when entering LAND
+    #
+    # Keep transition decisions in _tick_gcs/_tick_uav. Keep side effects here.
+
+    def _on_enter_state(self, new_state: str, old_state: str, reason: str):
+        """Dispatch state-entry hooks.
+
+        Add shared logging/metrics around hooks here if needed. For actual
+        state-specific user code, edit the on_enter_<state>() methods below.
+        """
+        handler = {
+            PREPARE: self.on_enter_prepare,
+            WAIT_TAKEOFF: self.on_enter_wait_takeoff,
+            TAKEOFF_RUNNING: self.on_enter_takeoff_running,
+            ACHIEVE: self.on_enter_achieve,
+            WAIT: self.on_enter_wait,
+            TRAJ_FOLLOWING: self.on_enter_traj_following,
+            STOP: self.on_enter_stop,
+            LAND: self.on_enter_land,
+            ABORT: self.on_enter_abort,
+        }.get(new_state)
+        if handler:
+            handler(old_state, reason)
+
+    def _run_state_action_hook(self):
+        """Run the periodic hook for the current state."""
+        handler = {
+            PREPARE: self.on_tick_prepare,
+            WAIT_TAKEOFF: self.on_tick_wait_takeoff,
+            TAKEOFF_RUNNING: self.on_tick_takeoff_running,
+            ACHIEVE: self.on_tick_achieve,
+            WAIT: self.on_tick_wait,
+            TRAJ_FOLLOWING: self.on_tick_traj_following,
+            STOP: self.on_tick_stop,
+            LAND: self.on_tick_land,
+            ABORT: self.on_tick_abort,
+        }.get(self.state)
+        if handler:
+            handler()
+
+    def on_enter_prepare(self, old_state: str, reason: str):
+        """Hook: entered PREPARE.
+
+        Add one-shot reset work here. Typical additions: clear local controller
+        state, reset a planner, or prepare sensors before self-check.
+        """
+
+    def on_enter_wait_takeoff(self, old_state: str, reason: str):
+        """Hook: GCS entered WAIT_TAKEOFF.
+
+        Add GCS-side UI/notification work here if you want an external display
+        or buzzer to show "all checks pending / ready for takeoff".
+        """
+
+    def on_enter_takeoff_running(self, old_state: str, reason: str):
+        """Hook: entered TAKEOFF_RUNNING.
+
+        UAV note: before GCS sends takeoff_started, this state means "prepared
+        and waiting, no local control action required". After takeoff_started,
+        traj_router is expected to generate the actual takeoff trajectory.
+        """
+
+    def on_enter_achieve(self, old_state: str, reason: str):
+        """Hook: UAV entered ACHIEVE.
+
+        Add one-shot operations here if the UAV must latch any state exactly at
+        takeoff completion before reporting achieve to GCS.
+        """
+
+    def on_enter_wait(self, old_state: str, reason: str):
+        """Hook: UAV entered WAIT after reporting ACHIEVE.
+
+        Add hold/idle setup here if your controller needs a mode switch while
+        waiting for GCS to command TRAJ_FOLLOWING.
+        """
+
+    def on_enter_traj_following(self, old_state: str, reason: str):
+        """Hook: entered TRAJ_FOLLOWING.
+
+        This is the natural place to switch your local controller into tracking
+        mode. The current FSM only changes state; it does not command the
+        controller directly.
+        """
+
+    def on_enter_stop(self, old_state: str, reason: str):
+        """Hook: GCS entered STOP.
+
+        Add one-shot GCS-side "waiting for land confirmation" behavior here.
+        """
+
+    def on_enter_land(self, old_state: str, reason: str):
+        """Hook: entered LAND.
+
+        Add one-shot land setup here if nominal landing needs an interface call.
+        Forced landing for ABORT belongs in force_land().
+        """
+
+    def on_enter_abort(self, old_state: str, reason: str):
+        """Hook: entered ABORT.
+
+        Add extra alarm/logging work here. The local forced landing hook is
+        force_land(), which has already been called by _set_state().
+        """
+
+    def on_tick_prepare(self):
+        """Hook: periodic work while in PREPARE."""
+
+    def on_tick_wait_takeoff(self):
+        """Hook: periodic GCS work while waiting for prepared + takeoff confirm."""
+
+    def on_tick_takeoff_running(self):
+        """Hook: periodic work while in TAKEOFF_RUNNING."""
+
+    def on_tick_achieve(self):
+        """Hook: periodic work while in ACHIEVE."""
+
+    def on_tick_wait(self):
+        """Hook: periodic UAV work while waiting for TRAJ_FOLLOWING."""
+
+    def on_tick_traj_following(self):
+        """Hook: periodic work while in TRAJ_FOLLOWING."""
+
+    def on_tick_stop(self):
+        """Hook: periodic GCS work while waiting for land confirmation."""
+
+    def on_tick_land(self):
+        """Hook: periodic work while in LAND."""
+
+    def on_tick_abort(self):
+        """Hook: periodic work while in ABORT."""
+
     def _start_takeoff_from_gcs(self):
+        """GCS starts the takeoff phase after all UAVs are prepared."""
         payload = {
             "height": self.takeoff_height,
             "duration": self.takeoff_duration,
@@ -639,18 +938,29 @@ class CoopFSM:
             self._broadcast_to_uavs("takeoff_started", payload)
 
     def _start_traj_following_from_gcs(self):
+        """GCS starts the main trajectory-following phase after all UAVs achieve."""
         payload = {"participants": self.participants}
         self._send_to_traj_router("traj_following", payload)
         self._broadcast_to_uavs("traj_following", payload)
         self._set_state(TRAJ_FOLLOWING, "all_uavs_achieved")
 
     def _start_land_from_gcs(self):
+        """GCS starts nominal landing after STOP and operator confirmation."""
         payload = {"participants": self.participants}
         self._send_to_traj_router("land", payload)
         self._broadcast_to_uavs("land", payload)
         self._set_state(LAND, "manual_land_confirmed")
 
     def _takeoff_reached(self) -> bool:
+        """UAV takeoff completion condition.
+
+        Default behavior accepts either:
+        - height is within takeoff_reached_tolerance of takeoff_height, or
+        - takeoff_duration + takeoff_timeout_margin elapsed after takeoff_started.
+
+        Modify this function if your real vehicle uses another altitude sign
+        convention or a better "takeoff complete" signal.
+        """
         height_reached = False
         if self.current_uav_state is not None:
             z = float(self.current_uav_state.position.z)
@@ -664,6 +974,7 @@ class CoopFSM:
         return height_reached or timed_out
 
     def _reset_for_next_round(self, reason: str):
+        """Clear per-round latches before returning to PREPARE."""
         self.prepared_uavs.clear()
         self.achieved_uavs.clear()
         self.prepared_sent = False
@@ -686,6 +997,11 @@ class CoopFSM:
         self._set_state(PREPARE, reason)
 
     def _tick_gcs(self, keyboard_commands: List[str]):
+        """GCS transition logic.
+
+        Keep this method focused on *when* the GCS should change state. Add
+        one-shot/per-tick side effects in the hooks above.
+        """
         if self.state == PREPARE:
             self._set_state(WAIT_TAKEOFF, "gcs_skip_prepare_check")
             return
@@ -711,6 +1027,11 @@ class CoopFSM:
             return
 
     def _tick_uav(self):
+        """MASTER/SLAVE transition logic.
+
+        Keep this method focused on *when* the UAV should change state. Add
+        controller or hardware commands in on_enter_* / on_tick_* hooks.
+        """
         if self.state == PREPARE:
             if self._health_ok():
                 if not self.prepared_sent:
@@ -750,6 +1071,7 @@ class CoopFSM:
             return
 
     def _status_payload(self) -> Dict[str, Any]:
+        """Build dashboard status JSON published on status_topic."""
         t = now_sec()
         z = None
         if self.current_uav_state is not None:
@@ -799,6 +1121,7 @@ class CoopFSM:
         }
 
     def _publish_status(self):
+        """Publish dashboard status at status_rate_hz."""
         t = now_sec()
         if t - self.last_status_pub_time < self.status_pub_period:
             return
@@ -806,12 +1129,22 @@ class CoopFSM:
         self.status_pub.publish(String(json_dumps(self._status_payload())))
 
     def spin(self):
+        """Main FSM loop.
+
+        Ordering per cycle:
+        1. Read operator/keyboard/RC abort input.
+        2. Run the user periodic hook for the current state.
+        3. Run role-specific transition logic.
+        4. Publish status for Rich/rosbag.
+        """
         rate = rospy.Rate(self.control_rate_hz)
         try:
             while not rospy.is_shutdown():
                 keyboard_commands = self._keyboard_commands()
                 if self.state != ABORT and self._manual_abort_requested(keyboard_commands):
                     self._enter_abort("manual_abort", {})
+
+                self._run_state_action_hook()
 
                 if self.state != ABORT:
                     if self.is_gcs:

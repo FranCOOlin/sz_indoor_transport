@@ -1,43 +1,104 @@
 <launch>
+    <!-- 当前节点角色：gcs / master / slave。GCS 负责集中调度，master/slave 运行在无人机侧。 -->
     <arg name="role" default="gcs"/>
+
+    <!-- 当前节点 ID。GCS 通常填 gcs；无人机填 uav0/uav1/...，会影响默认 topic/service 名。 -->
     <arg name="self_id" default="gcs"/>
+
+    <!-- 主机无人机 ID。GCS 默认从 /$(arg master_id)/mavros/rc/in 读取主机遥控器。 -->
     <arg name="master_id" default="uav0"/>
+
+    <!-- 参与本轮任务的无人机 ID 列表，逗号分隔。GCS 会等待这些 UAV 的 prepared/achieve。 -->
     <arg name="participants" default="uav0,uav1,uav2"/>
+
+    <!-- 本次实验流程 ID。所有 FSM 和测试节点必须一致，用于过滤旧实验遗留 service 事件。 -->
     <arg name="run_id" default="coop_lift_test_001"/>
 
+    <!-- FSM 主循环频率。只影响状态检查和周期 hook，不改变 status 发布频率。 -->
     <arg name="control_rate_hz" default="30.0"/>
+
+    <!-- /<id>/fsm/status 发布频率，Rich 操作台和 rosbag 主要看这个 topic。 -->
     <arg name="status_rate_hz" default="5.0"/>
 
+    <!-- 起飞目标高度，GCS 会通过 JSON service 发给 traj_router。 -->
     <arg name="takeoff_height" default="3.0"/>
+
+    <!-- 起飞轨迹持续时间，GCS 发给 traj_router；UAV 也用它作为起飞完成超时判据的一部分。 -->
     <arg name="takeoff_duration" default="6.0"/>
+
+    <!-- UAV 判断已达到起飞高度的绝对误差阈值，单位 m。 -->
     <arg name="takeoff_reached_tolerance" default="0.25"/>
+
+    <!-- 若高度判据迟迟不满足，takeoff_duration + 该余量后也认为起飞阶段完成。 -->
     <arg name="takeoff_timeout_margin" default="2.0"/>
+
+    <!-- LAND 状态保持多久后复位回 PREPARE。实飞时可按落地检测逻辑再替换。 -->
     <arg name="land_reset_delay" default="5.0"/>
 
+    <!-- UAVState 输入话题。无人机侧订阅 sz_indoor_controller/UAVState，用于健康检查和高度判据。 -->
     <arg name="uav_state_topic" default="/$(arg self_id)/quadrotor_feedback"/>
+
+    <!-- UAVState 最低频率要求，低于该值 UAV 不会上报 prepared。 -->
     <arg name="health_min_rate_hz" default="20.0"/>
+
+    <!-- UAVState 最新消息超时时间，超过该时间认为状态不新鲜。 -->
     <arg name="health_timeout" default="1.0"/>
+
+    <!-- 是否检查 UAVState.attitude 四元数范数。仿真脚本可能不填姿态，所以默认 false。 -->
     <arg name="require_attitude_valid" default="false"/>
 
+    <!-- 中央轨迹路由服务。GCS 会向它发送 takeoff/traj_following/land/abort JSON。 -->
     <arg name="traj_router_service" default="/traj_router/command"/>
+
+    <!-- GCS 事件服务。UAV 和 traj_router 通过它向 GCS 上报 prepared/achieve/stop/abort。 -->
     <arg name="gcs_event_service" default="/gcs/fsm/event"/>
+
+    <!-- GCS 操作服务。Rich 操作台按 t/l/a/r 时调用它。 -->
     <arg name="operator_service" default="/gcs/fsm/operator"/>
+
+    <!-- GCS 下发到每台 UAV FSM 的服务名模板；{uav_id} 会被替换成 participants 里的 ID。 -->
     <arg name="uav_command_service_template" default="/{uav_id}/fsm/command"/>
 
+    <!-- 遥控器输入 topic。GCS 默认读 master 的 MAVROS RCIn；UAV 侧也可订阅用于 ABORT。 -->
     <arg name="rc_in_topic" default="/$(arg master_id)/mavros/rc/in"/>
+
+    <!-- 起飞确认 RC 通道，1-based。默认 CH12。 -->
     <arg name="rc_takeoff_channel" default="12"/>
+
+    <!-- 起飞确认阈值。direction=above 时，通道值 >= 该值触发。 -->
     <arg name="rc_takeoff_threshold" default="1500"/>
+
+    <!-- 起飞确认触发方向：above 或 below。 -->
     <arg name="rc_takeoff_direction" default="above"/>
+
+    <!-- 降落确认 RC 通道，1-based。默认 CH5。 -->
     <arg name="rc_land_channel" default="5"/>
+
+    <!-- 降落确认阈值。 -->
     <arg name="rc_land_threshold" default="1800"/>
+
+    <!-- 降落确认触发方向：above 或 below。 -->
     <arg name="rc_land_direction" default="above"/>
+
+    <!-- ABORT 触发 RC 通道，1-based。默认 CH11。 -->
     <arg name="rc_abort_channel" default="11"/>
+
+    <!-- ABORT 触发阈值。 -->
     <arg name="rc_abort_threshold" default="1800"/>
+
+    <!-- ABORT 触发方向：above 或 below。 -->
     <arg name="rc_abort_direction" default="above"/>
 
+    <!-- 是否让 FSM 节点自己监听键盘。若使用 Rich 操作台，通常可以 false。 -->
     <arg name="enable_keyboard" default="true"/>
+
+    <!-- FSM 节点输出方式：screen 会污染 Rich 操作台，联调推荐 log。 -->
     <arg name="node_output" default="screen"/>
+
+    <!-- 是否随本 launch 一起启动 Rich 操作台。 -->
     <arg name="launch_monitor" default="false"/>
+
+    <!-- Rich 是否使用 alternate screen。true 时界面更干净，退出后回到原终端。 -->
     <arg name="monitor_screen" default="true"/>
 
     <node pkg="sz_indoor_fsm"
