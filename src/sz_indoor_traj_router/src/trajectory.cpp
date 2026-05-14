@@ -21,7 +21,7 @@ private:
     Eigen::Vector3d circle_formation_offsets[4];
     Eigen::Vector3d eight_formation_offsets[4];
     Eigen::Vector3d virtual_eight_formation_offsets[4];
-    int uav_ids[4] = {1, 2, 3, 4};     
+    int uav_ids[4] = {0, 1, 3, 4};     
     bool ready_flags[4] = {false, false, false, false};
     bool all_ready = false;
     bool trajectory_request_received = false;
@@ -47,10 +47,10 @@ public:
 
         for (int i = 0; i < 4; ++i) {
             int id = uav_ids[i];
-            std::string uav_ns = "/uav" + std::to_string(id);
+            std::string uav_ns = "/uav17" + std::to_string(id);
             traj_pub[i] = nh.advertise<sz_indoor_controller::TrajPoint>(uav_ns + "/planning/traj_point", 10);
 
-            std::string flag_topic = "/uav" + std::to_string(id) + "/traj_generation_flag";
+            std::string flag_topic = "/uav17" + std::to_string(id) + "/traj_generation_flag";
             flag_subs[i] = nh.subscribe<std_msgs::Bool>(
                 flag_topic, 1, boost::bind(&FormationPlanner::flagCallback, this, _1, i));
 
