@@ -1,0 +1,97 @@
+<launch>
+    <arg name="role" default="gcs"/>
+    <arg name="self_id" default="gcs"/>
+    <arg name="master_id" default="uav0"/>
+    <arg name="participants" default="uav0,uav1,uav2"/>
+    <arg name="run_id" default="coop_lift_test_001"/>
+
+    <arg name="control_rate_hz" default="30.0"/>
+    <arg name="status_rate_hz" default="5.0"/>
+
+    <arg name="takeoff_height" default="3.0"/>
+    <arg name="takeoff_duration" default="6.0"/>
+    <arg name="takeoff_reached_tolerance" default="0.25"/>
+    <arg name="takeoff_timeout_margin" default="2.0"/>
+    <arg name="land_reset_delay" default="5.0"/>
+
+    <arg name="uav_state_topic" default="/$(arg self_id)/quadrotor_feedback"/>
+    <arg name="health_min_rate_hz" default="20.0"/>
+    <arg name="health_timeout" default="1.0"/>
+    <arg name="require_attitude_valid" default="false"/>
+
+    <arg name="traj_router_service" default="/traj_router/command"/>
+    <arg name="gcs_event_service" default="/gcs/fsm/event"/>
+    <arg name="operator_service" default="/gcs/fsm/operator"/>
+    <arg name="uav_command_service_template" default="/{uav_id}/fsm/command"/>
+
+    <arg name="rc_in_topic" default="/$(arg master_id)/mavros/rc/in"/>
+    <arg name="rc_takeoff_channel" default="12"/>
+    <arg name="rc_takeoff_threshold" default="1500"/>
+    <arg name="rc_takeoff_direction" default="above"/>
+    <arg name="rc_land_channel" default="5"/>
+    <arg name="rc_land_threshold" default="1800"/>
+    <arg name="rc_land_direction" default="above"/>
+    <arg name="rc_abort_channel" default="11"/>
+    <arg name="rc_abort_threshold" default="1800"/>
+    <arg name="rc_abort_direction" default="above"/>
+
+    <arg name="enable_keyboard" default="true"/>
+    <arg name="node_output" default="screen"/>
+    <arg name="launch_monitor" default="false"/>
+    <arg name="monitor_screen" default="true"/>
+
+    <node pkg="sz_indoor_fsm"
+          type="fsm.py"
+          name="$(arg self_id)_coop_fsm"
+          output="$(arg node_output)">
+        <param name="role" value="$(arg role)"/>
+        <param name="self_id" value="$(arg self_id)"/>
+        <param name="master_id" value="$(arg master_id)"/>
+        <param name="participants" value="$(arg participants)"/>
+        <param name="run_id" value="$(arg run_id)"/>
+        <param name="control_rate_hz" value="$(arg control_rate_hz)"/>
+        <param name="status_rate_hz" value="$(arg status_rate_hz)"/>
+
+        <param name="takeoff_height" value="$(arg takeoff_height)"/>
+        <param name="takeoff_duration" value="$(arg takeoff_duration)"/>
+        <param name="takeoff_reached_tolerance" value="$(arg takeoff_reached_tolerance)"/>
+        <param name="takeoff_timeout_margin" value="$(arg takeoff_timeout_margin)"/>
+        <param name="land_reset_delay" value="$(arg land_reset_delay)"/>
+
+        <param name="uav_state_topic" value="$(arg uav_state_topic)"/>
+        <param name="health_min_rate_hz" value="$(arg health_min_rate_hz)"/>
+        <param name="health_timeout" value="$(arg health_timeout)"/>
+        <param name="require_attitude_valid" value="$(arg require_attitude_valid)"/>
+
+        <param name="traj_router_service" value="$(arg traj_router_service)"/>
+        <param name="gcs_event_service" value="$(arg gcs_event_service)"/>
+        <param name="operator_service" value="$(arg operator_service)"/>
+        <param name="command_service" value="/$(arg self_id)/fsm/command"/>
+        <param name="service_audit_topic" value="/$(arg self_id)/fsm/service_audit"/>
+        <param name="uav_command_service_template" value="$(arg uav_command_service_template)"/>
+
+        <param name="rc_in_topic" value="$(arg rc_in_topic)"/>
+        <param name="rc_takeoff_channel" value="$(arg rc_takeoff_channel)"/>
+        <param name="rc_takeoff_threshold" value="$(arg rc_takeoff_threshold)"/>
+        <param name="rc_takeoff_direction" value="$(arg rc_takeoff_direction)"/>
+        <param name="rc_land_channel" value="$(arg rc_land_channel)"/>
+        <param name="rc_land_threshold" value="$(arg rc_land_threshold)"/>
+        <param name="rc_land_direction" value="$(arg rc_land_direction)"/>
+        <param name="rc_abort_channel" value="$(arg rc_abort_channel)"/>
+        <param name="rc_abort_threshold" value="$(arg rc_abort_threshold)"/>
+        <param name="rc_abort_direction" value="$(arg rc_abort_direction)"/>
+
+        <param name="enable_keyboard" value="$(arg enable_keyboard)"/>
+    </node>
+
+    <node if="$(arg launch_monitor)"
+          pkg="sz_indoor_fsm"
+          type="fsm_monitor.py"
+          name="fsm_monitor"
+          output="screen">
+        <param name="participants" value="$(arg participants)"/>
+        <param name="screen" value="$(arg monitor_screen)"/>
+        <param name="operator_service" value="$(arg operator_service)"/>
+        <param name="run_id" value="$(arg run_id)"/>
+    </node>
+</launch>

@@ -1,0 +1,59 @@
+<launch>
+    <arg name="participants" default="uav0,uav1"/>
+    <arg name="run_id" default="coop_lift_test_001_auto_test"/>
+    <arg name="launch_monitor" default="true"/>
+    <arg name="manual_operator" default="true"/>
+
+    <include file="$(find sz_indoor_fsm)/launch/coop_fsm.launch">
+        <arg name="role" value="gcs"/>
+        <arg name="self_id" value="gcs"/>
+        <arg name="master_id" value="uav0"/>
+        <arg name="participants" value="$(arg participants)"/>
+        <arg name="run_id" value="$(arg run_id)"/>
+        <arg name="enable_keyboard" value="false"/>
+        <arg name="node_output" value="log"/>
+        <arg name="launch_monitor" value="$(arg launch_monitor)"/>
+        <arg name="monitor_screen" value="true"/>
+        <arg name="health_min_rate_hz" value="5.0"/>
+    </include>
+
+    <include file="$(find sz_indoor_fsm)/launch/coop_fsm.launch">
+        <arg name="role" value="master"/>
+        <arg name="self_id" value="uav0"/>
+        <arg name="master_id" value="uav0"/>
+        <arg name="participants" value="$(arg participants)"/>
+        <arg name="run_id" value="$(arg run_id)"/>
+        <arg name="enable_keyboard" value="false"/>
+        <arg name="node_output" value="log"/>
+        <arg name="launch_monitor" value="false"/>
+        <arg name="health_min_rate_hz" value="5.0"/>
+        <arg name="takeoff_duration" value="2.0"/>
+    </include>
+
+    <include file="$(find sz_indoor_fsm)/launch/coop_fsm.launch">
+        <arg name="role" value="slave"/>
+        <arg name="self_id" value="uav1"/>
+        <arg name="master_id" value="uav0"/>
+        <arg name="participants" value="$(arg participants)"/>
+        <arg name="run_id" value="$(arg run_id)"/>
+        <arg name="enable_keyboard" value="false"/>
+        <arg name="node_output" value="log"/>
+        <arg name="launch_monitor" value="false"/>
+        <arg name="health_min_rate_hz" value="5.0"/>
+        <arg name="takeoff_duration" value="2.0"/>
+    </include>
+
+    <node pkg="sz_indoor_fsm"
+          type="fsm_auto_test.py"
+          name="fsm_auto_test"
+          output="log"
+          required="true">
+        <param name="participants" value="$(arg participants)"/>
+        <param name="run_id" value="$(arg run_id)"/>
+        <param name="state_pub_rate_hz" value="30.0"/>
+        <param name="follow_duration" value="1.5"/>
+        <param name="land_duration" value="1.5"/>
+        <param name="test_timeout" value="45.0"/>
+        <param name="manual_operator" value="$(arg manual_operator)"/>
+    </node>
+</launch>
