@@ -351,6 +351,92 @@ string message
 
 ## 常用启动
 
+默认起飞参数已经统一为：
+
+```text
+takeoff_height = 1.0 m
+takeoff_duration = 10.0 s
+```
+
+### 实飞 GCS 侧
+
+GCS 侧推荐启动 `sz_indoor_launch/launch/coop_gcs.launch`，它会启动 GCS FSM、
+Rich 操作台、traj_router 和 trajectory_node：
+
+```bash
+source /home/fran/sz_indoor_transport_ws/devel/setup.zsh
+roslaunch sz_indoor_launch coop_gcs.launch \
+  self_id:=gcs \
+  master_id:=uav1 \
+  participants:=uav1,uav2,uav3,uav4 \
+  run_id:=coop_lift_test_001 \
+  traj_type:=1 \
+  takeoff_height:=1.0 \
+  takeoff_duration:=10.0 \
+  launch_monitor:=true \
+  node_output:=log
+```
+
+GCS 侧要特别注意：
+
+- `participants` 必须写全本轮参与的 UAV，GCS 会等待这些 UAV 上报 `prepared/achieve`。
+- `master_id` 是 GCS 默认读取 RC 的 UAV，例如 `/uav1/mavros/rc/in`。
+- `run_id` 必须和所有 UAV 侧一致，否则 service/event 会被拒绝。
+- `traj_type` 只需要在 GCS 侧重点配置，GCS 进入轨迹跟随时会发给 traj_router。
+- `takeoff_height/takeoff_duration` 默认就是 `1.0/10.0`；如果手动覆盖，GCS 和 UAV 侧保持一致。
+- 如果需要看报错，不要让 Rich 刷掉终端输出，可加 `monitor_screen:=false` 或把各节点 `output:=log`。
+
+### 实飞 UAV 侧
+
+每台 UAV 启动 `sz_indoor_launch/launch/coop_uav.launch`。master 例子：
+
+```bash
+source /home/fran/sz_indoor_transport_ws/devel/setup.zsh
+roslaunch sz_indoor_launch coop_uav.launch \
+  uav_id:=uav1 \
+  role:=master \
+  master_id:=uav1 \
+  run_id:=coop_lift_test_001 \
+  fcu_url:=/dev/ttyUSB0:1000000 \
+  tgt_system:=1 \
+  tgt_component:=1 \
+  simulation:=false \
+  launch_controller:=true \
+  takeoff_height:=1.0 \
+  takeoff_duration:=10.0
+```
+
+slave 例子：
+
+```bash
+source /home/fran/sz_indoor_transport_ws/devel/setup.zsh
+roslaunch sz_indoor_launch coop_uav.launch \
+  uav_id:=uav2 \
+  role:=slave \
+  master_id:=uav1 \
+  run_id:=coop_lift_test_001 \
+  fcu_url:=/dev/ttyUSB0:1000000 \
+  tgt_system:=1 \
+  tgt_component:=1 \
+  simulation:=false \
+  launch_controller:=true \
+  takeoff_height:=1.0 \
+  takeoff_duration:=10.0
+```
+
+UAV 侧要特别注意：
+
+- `uav_id` 会决定命名空间和话题名，例如 `/uav2/quadrotor_state`、`/uav2/trajectory`。
+- `role` 只能是 `master/slave`；只有 GCS 用 `participants`。
+- `master_id` 要和 GCS 保持一致，slave 也要填同一个 master。
+- `run_id` 必须和 GCS 一致。
+- `fcu_url/tgt_system/tgt_component` 要按每台飞控实际连接配置。
+- `simulation:=false` 会启动 MAVROS；仿真或只跑逻辑时再设为 `true`。
+- `launch_controller:=true` 会同时启动 MAVROS、controller、observer、UAV FSM。
+- controller 默认 `auto_offboard:=true`、`auto_arm:=true`、`keep_offboard:=true`，会持续发 setpoint 并保持 OFFBOARD；上桨前务必确认参数和安全流程。
+- `uav_state_topic` 默认是 `/<uav_id>/quadrotor_state`，由 observer 发布，FSM 自检依赖它。
+- `controller_file_path` 默认使用 `myparams_20260323.json`，换机或换参数时要显式指定。
+
 ### GCS + Rich 操作台
 
 ```bash
@@ -489,8 +575,8 @@ roslaunch sz_indoor_fsm coop_fsm_auto_test.launch \
 - `master_id`：master UAV ID，GCS 默认从它的 MAVROS RC topic 读遥控器。
 - `participants`：只给 GCS 使用的 UAV 列表。GCS 用它等待 prepared/achieve，并向所有 UAV 广播状态命令；MASTER/SLAVE 不需要知道这个名单。
 - `run_id`：本轮实验 ID，所有节点必须一致。
-- `takeoff_height`：起飞目标高度。
-- `takeoff_duration`：发给 traj_router 的起飞时间，同时用于超时判据。
+- `takeoff_height`：起飞目标高度，默认 `1.0` m。
+- `takeoff_duration`：发给 traj_router 的起飞时间，同时用于超时判据，默认 `10.0` s。
 - `uav_state_topic`：`quadrotor_state` 输入话题，默认 `/<self_id>/quadrotor_state`。
 - `health_min_rate_hz`：`quadrotor_state` 最低频率。
 - `traj_router_service`：中央轨迹路由服务。

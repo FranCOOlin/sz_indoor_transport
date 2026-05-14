@@ -43,7 +43,7 @@
         <arg name="node_output" value="log"/>
         <arg name="launch_monitor" value="false"/>
         <arg name="health_min_rate_hz" value="5.0"/>
-        <arg name="takeoff_duration" value="2.0"/>
+        <arg name="takeoff_duration" value="10.0"/>
     </include>
 
     <!-- slave UAV FSM。测试脚本会发布 /uav1/quadrotor_state。 -->
@@ -57,7 +57,7 @@
         <arg name="node_output" value="log"/>
         <arg name="launch_monitor" value="false"/>
         <arg name="health_min_rate_hz" value="5.0"/>
-        <arg name="takeoff_duration" value="2.0"/>
+        <arg name="takeoff_duration" value="10.0"/>
     </include>
 
     <!--
