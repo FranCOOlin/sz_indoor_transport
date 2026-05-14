@@ -13,6 +13,11 @@
     <arg name="controller_rate" default="200"/>
     <arg name="observer_rate" default="200"/>
     <arg name="prescaler" default="1"/>
+    <arg name="auto_offboard" default="true"/>
+    <arg name="auto_arm" default="true"/>
+    <arg name="keep_offboard" default="true"/>
+    <arg name="offboard_retry_period" default="1.0"/>
+    <arg name="arm_retry_period" default="1.0"/>
 
     <group unless="$(arg simulation)" ns="$(arg uav_id)">
         <include file="$(find mavros)/launch/px4.launch">
@@ -34,6 +39,11 @@
         <param name="file_path" value="$(arg file_path)" />
         <param name="controller_rate" value="$(arg controller_rate)" />
         <param name="prescaler" value="$(arg prescaler)" />
+        <param name="auto_offboard" value="$(arg auto_offboard)" />
+        <param name="auto_arm" value="$(arg auto_arm)" />
+        <param name="keep_offboard" value="$(arg keep_offboard)" />
+        <param name="offboard_retry_period" value="$(arg offboard_retry_period)" />
+        <param name="arm_retry_period" value="$(arg arm_retry_period)" />
     </node>
 
     <!-- 启动 Observer 节点 -->

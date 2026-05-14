@@ -15,6 +15,7 @@
 #include <geometry_msgs/PoseStamped.h>
 #include <geometry_msgs/Vector3Stamped.h>
 
+#include <algorithm>
 #include <functional>
 #include <utility> // std::ref
 #include <eigen3/Eigen/Dense>
@@ -41,40 +42,92 @@
 // ---------- 全局变量 ----------
 // 全局 MAVROS 状态，由 MAVROS 状态话题回调更新
 mavros_msgs::State current_state;
+bool current_state_received = false;
 //暂时写在这里, 通过状态模拟力传感器
 // ros::Publisher force_pub;
 // ---------- MAVROS 状态回调 ----------
 void status_cb(const mavros_msgs::State::ConstPtr &msg)
 {
   current_state = *msg;
-  ROS_INFO("MAVROS state updated: mode=%s, armed=%d", msg->mode.c_str(), msg->armed);
+  current_state_received = true;
+  ROS_INFO_THROTTLE(2.0, "MAVROS state: connected=%d mode=%s armed=%d",
+                    msg->connected,
+                    msg->mode.c_str(),
+                    msg->armed);
 }
 
-// ---------- Offboard/Arming 定时器回调 ----------
-// 以引用方式传入 MAVROS 服务客户端
-void offboardArmCallback(const ros::TimerEvent &event,
-                         ros::ServiceClient &set_mode_client,
-                         ros::ServiceClient &arming_client)
+struct OffboardArmManager
 {
-  if (current_state.mode != "OFFBOARD")
+  bool auto_offboard = true;
+  bool auto_arm = true;
+  bool keep_offboard = true;
+  double offboard_retry_period = 1.0;
+  double arm_retry_period = 1.0;
+  bool offboard_seen = false;
+  ros::Time last_offboard_request;
+  ros::Time last_arm_request;
+};
+
+void maintainOffboardAndArm(OffboardArmManager &manager,
+                            ros::ServiceClient &set_mode_client,
+                            ros::ServiceClient &arming_client)
+{
+  if (!current_state_received)
   {
-    ROS_INFO("Switching to OFFBOARD mode");
+    ROS_WARN_THROTTLE(2.0, "Waiting for MAVROS state before requesting OFFBOARD/arm");
+    return;
+  }
+  if (!current_state.connected)
+  {
+    ROS_WARN_THROTTLE(2.0, "MAVROS is not connected, skip OFFBOARD/arm request");
+    return;
+  }
+
+  const ros::Time now = ros::Time::now();
+  if (current_state.mode == "OFFBOARD")
+  {
+    manager.offboard_seen = true;
+  }
+
+  const bool should_request_offboard =
+      manager.auto_offboard &&
+      current_state.mode != "OFFBOARD" &&
+      (manager.keep_offboard || !manager.offboard_seen);
+
+  if (should_request_offboard &&
+      (manager.last_offboard_request.isZero() ||
+       (now - manager.last_offboard_request).toSec() >= manager.offboard_retry_period))
+  {
     mavros_msgs::SetMode offb_set_mode;
     offb_set_mode.request.custom_mode = "OFFBOARD";
     if (set_mode_client.call(offb_set_mode) && offb_set_mode.response.mode_sent)
     {
-      ROS_INFO("OFFBOARD enabled");
+      ROS_INFO("OFFBOARD request sent");
     }
+    else
+    {
+      ROS_WARN("Failed to send OFFBOARD request");
+    }
+    manager.last_offboard_request = now;
   }
-  if (current_state.mode == "OFFBOARD" && !current_state.armed)
+
+  if (manager.auto_arm &&
+      current_state.mode == "OFFBOARD" &&
+      !current_state.armed &&
+      (manager.last_arm_request.isZero() ||
+       (now - manager.last_arm_request).toSec() >= manager.arm_retry_period))
   {
-    ROS_INFO("Arming vehicle");
     mavros_msgs::CommandBool arm_cmd;
     arm_cmd.request.value = true;
     if (arming_client.call(arm_cmd) && arm_cmd.response.success)
     {
-      ROS_INFO("Vehicle armed");
+      ROS_INFO("Arm request accepted");
     }
+    else
+    {
+      ROS_WARN("Failed to send arm request");
+    }
+    manager.last_arm_request = now;
   }
 }
 
@@ -254,11 +307,22 @@ int main(int argc, char **argv)
   bool simu;
   int controller_rate;
   int prescaler;
+  bool auto_offboard;
+  bool auto_arm;
+  bool keep_offboard;
+  double offboard_retry_period;
+  double arm_retry_period;
   ros::param::get("~uav_id", uav_id);
   ros::param::get("~simulation", simu);
   ros::param::get("~file_path", file_path);
-  ros::param::get("~controller_rate", controller_rate);
-  ros::param::get("~prescaler", prescaler);
+  ros::param::param("~controller_rate", controller_rate, 200);
+  ros::param::param("~prescaler", prescaler, 1);
+  prescaler = std::max(prescaler, 1);
+  ros::param::param("~auto_offboard", auto_offboard, true);
+  ros::param::param("~auto_arm", auto_arm, true);
+  ros::param::param("~keep_offboard", keep_offboard, true);
+  ros::param::param("~offboard_retry_period", offboard_retry_period, 1.0);
+  ros::param::param("~arm_retry_period", arm_retry_period, 1.0);
   ROS_INFO("Simulation: %s", simu ? "true" : "false");
   if (uav_id.empty())
   {
@@ -374,8 +438,20 @@ int main(int argc, char **argv)
     // force_pub= nh.advertise<geometry_msgs::Vector3Stamped>(uav_id + "/cable_force", 10);
     // ros::Subscriber qsls_state_sub_ = nh.subscribe<sz_indoor_controller::QSLSState>(uav_id + "/qsls_state", 10, std::bind(tempQSLSStateCallback, std::placeholders::_1, std::ref(qsls_ctrl.params),std::ref(qsls_ctrl.control_input)));//在这里面发布力传感信息
     
-    // 利用 ROS 定时器实现 offboard/arming 切换，每 5 秒触发一次
-    ros::Timer offboard_arm_timer = nh.createTimer(ros::Duration(5.0), std::bind(offboardArmCallback, std::placeholders::_1, std::ref(set_mode_client), std::ref(arming_client)));
+    OffboardArmManager offboard_arm_manager;
+    offboard_arm_manager.auto_offboard = auto_offboard;
+    offboard_arm_manager.auto_arm = auto_arm;
+    offboard_arm_manager.keep_offboard = keep_offboard;
+    offboard_arm_manager.offboard_retry_period = std::max(offboard_retry_period, 0.1);
+    offboard_arm_manager.arm_retry_period = std::max(arm_retry_period, 0.1);
+
+    ROS_INFO("Auto OFFBOARD=%d keep_OFFBOARD=%d auto_arm=%d offboard_retry=%.2f arm_retry=%.2f",
+             auto_offboard,
+             keep_offboard,
+             auto_arm,
+             offboard_arm_manager.offboard_retry_period,
+             offboard_arm_manager.arm_retry_period);
+
     // 设置循环执行频率
     ros::Rate Rate(controller_rate);
     int i = 0;
@@ -394,6 +470,7 @@ int main(int argc, char **argv)
         control_signal(3) = control_input.mavlink_omega(2);
         // 发送控制指令到飞控
         sendCommandMavros(control_signal, local_rate_pub, local_thrust_pub);
+        maintainOffboardAndArm(offboard_arm_manager, set_mode_client, arming_client);
         
         sz_indoor_controller::UAVCommand command_msg;
         command_msg.thrust = control_input.thrust;

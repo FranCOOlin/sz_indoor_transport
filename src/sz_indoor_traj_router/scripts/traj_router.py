@@ -70,12 +70,18 @@ class MultiTrajRouterNode:
             rospy.logerr("participants 参数解析失败: %s", participants_str)
             rospy.signal_shutdown("participants 参数无效")
             return
-        
+
         self.uav_states = {}
-        
+        self.default_traj_type = int(rospy.get_param("~traj_type", 1))
+        self.landing_duration = float(rospy.get_param("~landing_duration", 5.0))
+        self.trajectory_request_pub = rospy.Publisher(
+            '/trajectory_request', String, queue_size=10
+        )
+
         for uav_id in self.uavs:
             full_id = f"/{uav_id}" if not uav_id.startswith('/') else uav_id
             state = UAVState(full_id)
+            state.landing_duration = self.landing_duration
             self.uav_states[full_id] = state
             self._init_uav_communication(state)
             rospy.loginfo(f"[初始化] {full_id}")
@@ -169,7 +175,7 @@ class MultiTrajRouterNode:
             return self.handle_takeoff(participants_full, height, duration)
         
         elif cmd == "traj_following":
-            return self.handle_traj_following(participants_full)
+            return self.handle_traj_following(participants_full, payload)
         
         elif cmd == "land":
             return self.handle_land(participants_full)
@@ -200,15 +206,34 @@ class MultiTrajRouterNode:
             return JsonCommandResponse(False, f"失败: {fail}")
         return JsonCommandResponse(True, f"起飞: {success}")
     
-    def handle_traj_following(self, payload):
-        if self.current_state == self.STATE_HOVER:
+    def handle_traj_following(self, participants, payload):
+        """开始主轨迹跟随。"""
+        try:
             traj_type = int(payload.get("traj_type", self.default_traj_type))
-            if traj_type <= 0:
-                return JsonCommandResponse(False, "traj_type must be positive")
-            self.request_trajectory_from_downstream(f"trajectory{traj_type}")
-            return JsonCommandResponse(True, "traj_following accepted")
-        else:
-            return JsonCommandResponse(False, f"cannot start from {self.current_state}")
+        except (TypeError, ValueError):
+            return JsonCommandResponse(False, "traj_type must be an integer")
+        if traj_type <= 0:
+            return JsonCommandResponse(False, "traj_type must be positive")
+
+        trajectory_name = f"trajectory{traj_type}"
+        success = []
+        fail = []
+
+        for uav_id in participants:
+            state = self.uav_states[uav_id]
+            if state.current_state in [
+                state.STATE_TAKEOFF,
+                state.STATE_HOVER,
+                state.STATE_TRAJ_FOLLOWING,
+            ]:
+                self.request_trajectory_from_downstream(state, trajectory_name)
+                success.append(uav_id)
+            else:
+                fail.append(f"{uav_id}({state.current_state})")
+
+        if fail:
+            return JsonCommandResponse(False, f"失败: {fail}")
+        return JsonCommandResponse(True, f"轨迹跟随 {trajectory_name}: {success}")
     
     def handle_land(self, participants):
         """降落命令"""
@@ -228,18 +253,16 @@ class MultiTrajRouterNode:
             return JsonCommandResponse(False, f"失败: {fail}")
         return JsonCommandResponse(True, f"降落: {success}")
     
-    def request_trajectory_from_downstream(self, state):
+    def request_trajectory_from_downstream(self, state, trajectory_name):
         """请求轨迹"""
         flag = Bool()
         flag.data = True
         state.flag_pub.publish(flag)
-        
+
         msg = String()
-        msg.data = "main_trajectory"
-        # 使用全局轨迹请求 topic
-        traj_req_pub = rospy.Publisher('/trajectory_request', String, queue_size=10)
-        traj_req_pub.publish(msg)
-        
+        msg.data = trajectory_name
+        self.trajectory_request_pub.publish(msg)
+
         state.trajectory_active = True
         state.trajectory_started = False
     
