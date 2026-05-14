@@ -8,6 +8,7 @@
 - `scripts/fsm_monitor.py`：Rich 终端 GCS 操作台。
 - `scripts/fsm_auto_test.py`：自动/半自动集成测试驱动。
 - `srv/JsonCommand.srv`：所有 FSM service 使用的 JSON 命令接口。
+- `README_traj_router.md`：给 traj_router 同事看的 service/JSON 对接说明。
 - `launch/coop_fsm.launch`：单节点 FSM/monitor 启动模板。
 - `launch/coop_fsm_auto_test.launch`：本地测试流程。
 
@@ -119,7 +120,6 @@ roslaunch sz_indoor_fsm coop_fsm.launch \
   role:=master \
   self_id:=uav0 \
   master_id:=uav0 \
-  participants:=uav0,uav1 \
   node_output:=log \
   launch_monitor:=false
 ```
@@ -131,7 +131,6 @@ roslaunch sz_indoor_fsm coop_fsm.launch \
   role:=slave \
   self_id:=uav1 \
   master_id:=uav0 \
-  participants:=uav0,uav1 \
   node_output:=log \
   launch_monitor:=false
 ```
@@ -167,7 +166,7 @@ roslaunch sz_indoor_fsm coop_fsm_auto_test.launch \
 - `role`：`gcs/master/slave`。
 - `self_id`：当前节点 ID。
 - `master_id`：master UAV ID，GCS 默认从它的 MAVROS RC topic 读遥控器。
-- `participants`：GCS 等待 prepared/achieve 的 UAV 列表。
+- `participants`：只给 GCS 使用的 UAV 列表。GCS 用它等待 prepared/achieve，并向所有 UAV 广播状态命令；MASTER/SLAVE 不需要知道这个名单。
 - `run_id`：本轮实验 ID，所有节点必须一致。
 - `takeoff_height`：起飞目标高度。
 - `takeoff_duration`：发给 traj_router 的起飞时间，同时用于超时判据。

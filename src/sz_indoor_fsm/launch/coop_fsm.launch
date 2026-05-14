@@ -2,7 +2,7 @@
     <!-- 当前节点角色：gcs / master / slave。GCS 负责集中调度，master/slave 运行在无人机侧。 -->
     <arg name="role" default="gcs"/>
 
-    <!-- 当前节点 ID。GCS 通常填 gcs；无人机填 uav0/uav1/...，会影响默认 topic/service 名。 -->
+    <!-- 当前节点 ID。GCS 通常填 gcs；无人机填 uav0/uav1/...，会影响默认 service 名。 -->
     <arg name="self_id" default="gcs"/>
 
     <!-- 主机无人机 ID。GCS 默认从 /$(arg master_id)/mavros/rc/in 读取主机遥控器。 -->
@@ -17,7 +17,7 @@
     <!-- FSM 主循环频率。只影响状态检查和周期 hook，不改变 status 发布频率。 -->
     <arg name="control_rate_hz" default="30.0"/>
 
-    <!-- /<id>/fsm/status 发布频率，Rich 操作台和 rosbag 主要看这个 topic。 -->
+    <!-- /<self_id>/fsm/status 发布频率，Rich 操作台和 rosbag 主要看这个 topic。 -->
     <arg name="status_rate_hz" default="5.0"/>
 
     <!-- 起飞目标高度，GCS 会通过 JSON service 发给 traj_router。 -->
@@ -60,7 +60,8 @@
     <arg name="uav_command_service_template" default="/{uav_id}/fsm/command"/>
 
     <!-- 遥控器输入 topic。GCS 默认读 master 的 MAVROS RCIn；UAV 侧也可订阅用于 ABORT。 -->
-    <arg name="rc_in_topic" default="/$(arg master_id)/mavros/rc/in"/>
+    <arg name="rc_in_topic"
+         default="$(eval '/' + arg('master_id') + '/mavros/rc/in' if arg('role') == 'gcs' else '/' + arg('self_id') + '/mavros/rc/in')"/>
 
     <!-- 起飞确认 RC 通道，1-based。默认 CH12。 -->
     <arg name="rc_takeoff_channel" default="12"/>
@@ -108,7 +109,8 @@
         <param name="role" value="$(arg role)"/>
         <param name="self_id" value="$(arg self_id)"/>
         <param name="master_id" value="$(arg master_id)"/>
-        <param name="participants" value="$(arg participants)"/>
+        <!-- participants 只属于 GCS：UAV 不需要知道全体成员名单。 -->
+        <param if="$(eval arg('role') == 'gcs')" name="participants" value="$(arg participants)"/>
         <param name="run_id" value="$(arg run_id)"/>
         <param name="control_rate_hz" value="$(arg control_rate_hz)"/>
         <param name="status_rate_hz" value="$(arg status_rate_hz)"/>
@@ -128,6 +130,7 @@
         <param name="gcs_event_service" value="$(arg gcs_event_service)"/>
         <param name="operator_service" value="$(arg operator_service)"/>
         <param name="command_service" value="/$(arg self_id)/fsm/command"/>
+        <param name="status_topic" value="/$(arg self_id)/fsm/status"/>
         <param name="service_audit_topic" value="/$(arg self_id)/fsm/service_audit"/>
         <param name="uav_command_service_template" value="$(arg uav_command_service_template)"/>
 

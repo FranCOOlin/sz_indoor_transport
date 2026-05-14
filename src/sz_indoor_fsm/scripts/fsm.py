@@ -2,44 +2,40 @@
 # -*- coding: utf-8 -*-
 
 """
-Cooperative lift task finite-state machine.
+协同吊运任务有限状态机。
 
-This node intentionally keeps all high-level mission decisions in one Python
-file so it is easy to inspect and modify during flight-test iteration.
+本节点有意把所有高层任务决策集中在一个 Python 文件中，便于在飞行测试迭代时检查和修改。
 
-Roles
------
+角色
+----
 GCS:
-    Central coordinator. It collects prepared/achieve events from UAV FSMs,
-    sends JSON service commands to traj_router and UAVs, and waits for operator
-    takeoff/land confirmation.
+    中央协调器。收集各 UAV FSM 上报的 prepared/achieve 事件，
+    向 traj_router 和各 UAV 发送 JSON 服务命令，并等待操作员确认起飞/降落。
 
 MASTER / SLAVE:
-    Per-UAV task FSM. Each UAV checks its own UAVState stream, reports
-    prepared/achieve to GCS, accepts state-change commands from GCS, and owns
-    the local forced-landing hook for ABORT.
+    单机任务 FSM。每架 UAV 检查自己的 UAVState 数据流，向 GCS 上报
+    prepared/achieve，接收 GCS 下发的状态切换命令，并拥有本地 ABORT 强制降落钩子。
 
-Where to add custom behavior
-----------------------------
-The safest extension points are near the bottom of CoopFSM:
+自定义行为的添加位置
+--------------------
+最安全的扩展点位于 CoopFSM 靠近文件底部的位置：
 
     1. on_enter_<state>() hooks
-       Called once immediately after a state transition.
-       Use these for one-shot operations such as switching a controller mode,
-       arming a subsystem, latching a trajectory id, or notifying another node.
+       状态切换后立即调用一次。
+       适合放置一次性操作，例如切换控制器模式、使能子系统、
+       锁存轨迹 id，或通知其他节点。
 
     2. on_tick_<state>() hooks
-       Called every control tick while the FSM remains in that state.
-       Use these for periodic state-specific work such as publishing a hold
-       command, checking an external condition, or feeding a watchdog.
+       FSM 保持在该状态期间，每个控制周期都会调用。
+       适合放置与状态相关的周期性工作，例如发布悬停命令、
+       检查外部条件，或喂 watchdog。
 
     3. force_land()
-       The reserved interface for ABORT forced landing. The current version
-       only logs; wire your real landing/kill/RTL interface there.
+       为 ABORT 强制降落预留的接口。当前版本只打印日志；
+       请在这里接入真实的降落、kill 或 RTL 接口。
 
-Core transition logic is in _tick_gcs() and _tick_uav(). Try to keep those
-methods focused on deciding *when to change state*. Put side effects in the
-hooks above unless the side effect is itself the transition command.
+核心状态转移逻辑位于 _tick_gcs() 和 _tick_uav()。尽量让这些方法只负责决定
+*何时切换状态*。除非副作用本身就是状态转移命令，否则请把副作用放到上面的钩子中。
 """
 
 import json
@@ -61,8 +57,8 @@ from sz_indoor_fsm.srv import JsonCommand, JsonCommandResponse
 
 
 PREPARE = "PREPARE"
-# GCS-only wait state: GCS has skipped its own checks and is waiting for UAVs
-# to report prepared, then operator confirmation to start takeoff.
+# 仅 GCS 使用的等待状态：GCS 已跳过自身检查，正在等待 UAV 上报 prepared，
+# 随后等待操作员确认起飞。
 WAIT_TAKEOFF = "WAIT_TAKEOFF"
 TAKEOFF_RUNNING = "TAKEOFF_RUNNING"
 ACHIEVE = "ACHIEVE"
@@ -78,7 +74,7 @@ ROLE_SLAVE = "slave"
 
 
 def now_sec() -> float:
-    """Return ROS time as seconds. Keeping this wrapped makes tests/stubs easier."""
+    """返回以秒为单位的 ROS 时间。封装这一层便于测试或替身实现。"""
     return rospy.Time.now().to_sec()
 
 
@@ -107,11 +103,10 @@ def json_loads(text: str) -> Optional[Dict[str, Any]]:
 
 
 class KeyboardReader(threading.Thread):
-    """Small non-blocking stdin reader.
+    """小型非阻塞 stdin 读取线程。
 
-    This is used only when the FSM itself is launched in an interactive
-    terminal. In normal GCS operation the Rich monitor calls the operator
-    service instead, so FSM logging and keyboard handling can be separated.
+    仅当 FSM 本身在交互式终端中启动时使用。正常 GCS 运行时，
+    Rich 监视器会改为调用 operator 服务，从而把 FSM 日志和键盘处理分离。
     """
 
     def __init__(self):
@@ -150,19 +145,17 @@ class KeyboardReader(threading.Thread):
 
 
 class CoopFSM:
-    """Role-aware cooperative FSM.
+    """感知角色的协同 FSM。
 
-    The class is deliberately not split into many subclasses yet. Most flight
-    test changes need to see GCS/UAV behavior side-by-side, and role branching is
-    still small enough to keep readable in one file.
+    这里有意暂不拆分为多个子类。大多数飞行测试修改都需要并排查看 GCS/UAV 行为，
+    目前按角色分支的复杂度仍然足够小，放在一个文件中更容易阅读。
     """
 
     def __init__(self):
         # ------------------------------------------------------------------
-        # Identity and run scoping
+        # 身份与运行范围
         # ------------------------------------------------------------------
-        # run_id is included in all JSON service payloads. It prevents stale
-        # events from an old test run being accepted by a newly launched FSM.
+        # run_id 会放入所有 JSON 服务载荷中，防止新启动的 FSM 误接收旧测试轮次的过期事件。
         self.role = str(rospy.get_param("~role", ROLE_SLAVE)).lower().strip()
         if self.role not in [ROLE_GCS, ROLE_MASTER, ROLE_SLAVE]:
             raise RuntimeError("~role must be one of: gcs, master, slave")
@@ -173,14 +166,21 @@ class CoopFSM:
         ).strip()
         self.master_id = str(rospy.get_param("~master_id", "uav0")).strip()
         self.run_id = str(rospy.get_param("~run_id", "coop_lift_test_001")).strip()
+        self.topic_prefix = f"/{self.self_id.strip('/')}"
 
-        self.participants = parse_csv(rospy.get_param("~participants", ""))
-        if self.is_gcs and not self.participants:
-            self.participants = [self.master_id]
-        self.participants = [p for p in self.participants if p and p != "gcs"]
+        # 只有 GCS 持有全局 UAV 列表。GCS 使用该列表判断是否所有飞机都已上报
+        # prepared/achieve，并向所有 UAV FSM 节点广播高层命令。单个 UAV FSM 应保持本地化：
+        # 只需要 self_id/role 以及 GCS 服务地址。
+        if self.is_gcs:
+            self.participants = parse_csv(rospy.get_param("~participants", ""))
+            if not self.participants:
+                self.participants = [self.master_id]
+            self.participants = [p for p in self.participants if p and p != "gcs"]
+        else:
+            self.participants = []
 
         # ------------------------------------------------------------------
-        # Loop and status publishing rates
+        # 循环与状态发布频率
         # ------------------------------------------------------------------
         self.control_rate_hz = float(rospy.get_param("~control_rate_hz", 30.0))
         self.status_rate_hz = float(rospy.get_param("~status_rate_hz", 5.0))
@@ -188,10 +188,10 @@ class CoopFSM:
         self.last_status_pub_time = 0.0
 
         # ------------------------------------------------------------------
-        # Mission timing and thresholds
+        # 任务时序与阈值
         # ------------------------------------------------------------------
-        # takeoff_duration is sent to traj_router and also used as a fallback
-        # achieve timeout if height feedback is unavailable or delayed.
+        # takeoff_duration 会发送给 traj_router；当高度反馈不可用或延迟时，
+        # 也会作为 achieve 的兜底超时时间。
         self.takeoff_height = float(rospy.get_param("~takeoff_height", 3.0))
         self.takeoff_duration = float(rospy.get_param("~takeoff_duration", 6.0))
         self.takeoff_reached_tolerance = float(
@@ -204,13 +204,13 @@ class CoopFSM:
         self.service_timeout = float(rospy.get_param("~service_timeout", 0.3))
 
         # ------------------------------------------------------------------
-        # UAV health check from sz_indoor_controller/UAVState
+        # 基于 sz_indoor_controller/UAVState 的 UAV 健康检查
         # ------------------------------------------------------------------
-        # The default topic follows the simulator/observer convention found in
-        # this workspace. Override ~uav_state_topic if your real estimator
-        # publishes UAVState somewhere else.
+        # 话题按节点 id 划分作用域。GCS 自然位于 /gcs 下，
+        # UAV 使用 /uav0、/uav1 等前缀，这样话题列表更容易浏览。
+        # 如果真实估计器在其他位置发布 UAVState，请覆盖 ~uav_state_topic。
         self.health_topic = str(
-            rospy.get_param("~uav_state_topic", f"/{self.self_id}/quadrotor_feedback")
+            rospy.get_param("~uav_state_topic", f"{self.topic_prefix}/quadrotor_feedback")
         )
         self.health_min_rate_hz = float(rospy.get_param("~health_min_rate_hz", 20.0))
         self.health_timeout = float(rospy.get_param("~health_timeout", 1.0))
@@ -223,14 +223,14 @@ class CoopFSM:
         )
 
         # ------------------------------------------------------------------
-        # JSON service interfaces
+        # JSON 服务接口
         # ------------------------------------------------------------------
         # gcs_event_service:
-        #   UAV/traj_router -> GCS event ingress, e.g. prepared/achieve/stop.
+        #   UAV/traj_router -> GCS 的事件入口，例如 prepared/achieve/stop。
         # operator_service:
-        #   Rich monitor / terminal UI -> GCS operator commands.
+        #   Rich 监视器/终端 UI -> GCS 操作员命令。
         # command_service:
-        #   GCS -> this UAV command ingress, e.g. traj_following/land/abort.
+        #   GCS -> 当前 UAV 的命令入口，例如 traj_following/land/abort。
         self.gcs_event_service = str(
             rospy.get_param("~gcs_event_service", "/gcs/fsm/event")
         )
@@ -254,23 +254,20 @@ class CoopFSM:
         )
 
         # ------------------------------------------------------------------
-        # Topics for observability and replay
+        # 可观测性与回放相关话题
         # ------------------------------------------------------------------
-        # status_topic feeds the Rich dashboard. service_audit_topic mirrors
-        # service requests/responses into rosbag-recordable String messages,
-        # because ROS1 rosbag cannot directly record service calls.
+        # status_topic 供 Rich 仪表盘使用。service_audit_topic 会把服务请求/响应
+        # 镜像为 rosbag 可记录的 String 消息，因为 ROS1 rosbag 不能直接记录服务调用。
         self.status_topic = str(
             rospy.get_param(
                 "~status_topic",
-                "/gcs/fsm/status" if self.is_gcs else f"/{self.self_id}/fsm/status",
+                f"{self.topic_prefix}/fsm/status",
             )
         )
         self.service_audit_topic = str(
             rospy.get_param(
                 "~service_audit_topic",
-                "/gcs/fsm/service_audit"
-                if self.is_gcs
-                else f"/{self.self_id}/fsm/service_audit",
+                f"{self.topic_prefix}/fsm/service_audit",
             )
         )
         self.rc_topic = str(
@@ -278,15 +275,15 @@ class CoopFSM:
                 "~rc_in_topic",
                 f"/{self.master_id}/mavros/rc/in"
                 if self.is_gcs
-                else f"/{self.self_id}/mavros/rc/in",
+                else f"{self.topic_prefix}/mavros/rc/in",
             )
         )
 
         # ------------------------------------------------------------------
-        # Local keyboard and master RC input
+        # 本地键盘与 master 遥控输入
         # ------------------------------------------------------------------
-        # RC channel numbers are 1-based, matching RC transmitter labels.
-        # Internally _rc_value() converts them to zero-based array indices.
+        # RC 通道号从 1 开始，与遥控器标注一致。
+        # 内部 _rc_value() 会将其转换为从 0 开始的数组索引。
         self.enable_keyboard = bool(rospy.get_param("~enable_keyboard", True))
         self.key_takeoff = str(rospy.get_param("~key_takeoff", "t"))
         self.key_land = str(rospy.get_param("~key_land", "l"))
@@ -309,7 +306,7 @@ class CoopFSM:
         ).lower().strip()
 
         # ------------------------------------------------------------------
-        # Runtime state
+        # 运行时状态
         # ------------------------------------------------------------------
         self.state = PREPARE
         self.prev_state = ""
@@ -340,7 +337,7 @@ class CoopFSM:
         self.current_uav_state_invalid_reason = "no_message"
 
         # ------------------------------------------------------------------
-        # ROS publishers, subscribers, and services
+        # ROS 发布者、订阅者和服务
         # ------------------------------------------------------------------
         self.status_pub = rospy.Publisher(self.status_topic, String, queue_size=10)
         self.service_audit_pub = rospy.Publisher(
@@ -378,10 +375,10 @@ class CoopFSM:
         )
 
     def _set_state(self, new_state: str, reason: str = ""):
-        """Change FSM state and run state-entry side effects.
+        """切换 FSM 状态，并执行进入状态时的副作用。
 
-        Keep transition bookkeeping here so every transition updates age,
-        prev_state, logs, timers, and extension hooks consistently.
+        将状态转移的簿记集中在这里，确保每次转移都会一致地更新状态持续时间、
+        prev_state、日志、计时器和扩展钩子。
         """
         if new_state == self.state:
             return
@@ -421,15 +418,13 @@ class CoopFSM:
         )
 
     def _uav_state_msg_valid(self, msg: UAVState):
-        """Validate the semantic content of UAVState.
+        """校验 UAVState 的语义内容。
 
-        Current default checks:
-        - position and velocity are finite numbers
-        - optional attitude quaternion is finite and near unit norm
+        当前默认检查：
+        - 位置和速度都是有限数值
+        - 可选的姿态四元数是有限数值，且接近单位模长
 
-        If you later add fields to UAVState, extend this function with the
-        additional validity rules. This is the place that corresponds to the
-        TODO you mentioned before.
+        如果后续向 UAVState 添加字段，请在本函数中扩展对应的有效性规则。
         """
         position_values = [msg.position.x, msg.position.y, msg.position.z]
         velocity_values = [msg.velocity.x, msg.velocity.y, msg.velocity.z]
@@ -461,13 +456,13 @@ class CoopFSM:
         return fresh and self._health_rate() >= self.health_min_rate_hz and self.current_uav_state_valid
 
     def _event_service_cb(self, req):
-        """GCS service callback for external mission events.
+        """GCS 接收外部任务事件的服务回调。
 
-        Expected event values:
-        - prepared: a UAV passed self-check and is ready for the takeoff phase.
-        - achieve: a UAV reached takeoff height/time condition.
-        - stop: traj_router reports the main trajectory is finished.
-        - abort: any node reports an emergency abort.
+        期望的 event 取值：
+        - prepared：某架 UAV 已通过自检，可进入起飞阶段。
+        - achieve：某架 UAV 已满足起飞高度/时间条件。
+        - stop：traj_router 上报主轨迹已完成。
+        - abort：任意节点上报紧急中止。
         """
         payload = json_loads(req.json)
         if payload is None:
@@ -501,7 +496,7 @@ class CoopFSM:
         return JsonCommandResponse(False, f"unknown event: {event}")
 
     def _command_service_cb(self, req):
-        """UAV service callback for commands sent by GCS."""
+        """UAV 接收 GCS 命令的服务回调。"""
         payload = json_loads(req.json)
         if payload is None:
             self._audit_service("in", self.command_service, {}, False, "invalid json object")
@@ -536,11 +531,10 @@ class CoopFSM:
         return JsonCommandResponse(False, f"unknown cmd: {cmd}")
 
     def _operator_service_cb(self, req):
-        """GCS operator command service.
+        """GCS 操作员命令服务。
 
-        The Rich terminal monitor calls this service when the user presses
-        t/l/a/r. Keeping operator input as a service avoids mixing dashboard
-        rendering with mission transition logic.
+        用户按下 t/l/a/r 时，Rich 终端监视器会调用该服务。
+        将操作员输入保持为服务，可避免仪表盘渲染与任务转移逻辑混在一起。
         """
         payload = json_loads(req.json)
         if payload is None:
@@ -590,7 +584,7 @@ class CoopFSM:
         return payload
 
     def _call_json_service(self, service_name: str, payload: Dict[str, Any]) -> bool:
-        """Call a JsonCommand service and mirror the result to service_audit."""
+        """调用 JsonCommand 服务，并将结果镜像到 service_audit。"""
         try:
             rospy.wait_for_service(service_name, timeout=self.service_timeout)
             resp = rospy.ServiceProxy(service_name, JsonCommand)(json_dumps(payload))
@@ -624,7 +618,7 @@ class CoopFSM:
         success: Optional[bool],
         message: str,
     ):
-        """Publish a rosbag-friendly audit record for each JSON service call."""
+        """为每次 JSON 服务调用发布 rosbag 友好的审计记录。"""
         audit = {
             "stamp": now_sec(),
             "run_id": self.run_id,
@@ -640,7 +634,7 @@ class CoopFSM:
         self.service_audit_pub.publish(String(json_dumps(audit)))
 
     def _send_gcs_event(self, event: str, extra: Optional[Dict[str, Any]] = None) -> bool:
-        """Send one UAV/traj event to GCS."""
+        """向 GCS 发送一条 UAV/traj 事件。"""
         payload = self._make_payload(
             event,
             {
@@ -653,17 +647,17 @@ class CoopFSM:
         return self._call_json_service(self.gcs_event_service, payload)
 
     def _send_to_traj_router(self, cmd: str, extra: Optional[Dict[str, Any]] = None) -> bool:
-        """Send one high-level command to the central traj_router service."""
+        """向中央 traj_router 服务发送一条高层命令。"""
         return self._call_json_service(self.traj_router_service, self._make_payload(cmd, extra))
 
     def _send_to_uav(self, uav_id: str, cmd: str, extra: Optional[Dict[str, Any]] = None) -> bool:
-        """Send one command to a specific UAV FSM."""
+        """向指定 UAV FSM 发送一条命令。"""
         service = self.uav_command_service_template.format(uav_id=uav_id)
         payload = self._make_payload(cmd, {"target": uav_id, **(extra or {})})
         return self._call_json_service(service, payload)
 
     def _broadcast_to_uavs(self, cmd: str, extra: Optional[Dict[str, Any]] = None):
-        """Send the same command to every participant listed in ~participants."""
+        """向 ~participants 中列出的每个参与者发送同一条命令。"""
         for uav_id in self.participants:
             self._send_to_uav(uav_id, cmd, extra)
 
@@ -743,11 +737,10 @@ class CoopFSM:
         return "abort" in keyboard_commands or self._abort_active()
 
     def _enter_abort(self, reason: str, payload: Optional[Dict[str, Any]] = None):
-        """Latch ABORT and fan it out to all relevant nodes.
+        """锁存 ABORT，并将其扇出到所有相关节点。
 
-        ABORT is intentionally sticky; it does not reset itself after a timer.
-        This prevents a real emergency landing path from accidentally rearming
-        the nominal mission flow.
+        ABORT 被有意设计为粘滞状态；它不会在计时器结束后自行复位。
+        这样可以防止真实紧急降落流程意外重新使能正常任务流程。
         """
         if self.state == ABORT:
             return
@@ -761,15 +754,15 @@ class CoopFSM:
             self._send_gcs_event("abort", {"reason": reason})
 
     def force_land(self, reason: str, payload: Dict[str, Any]):
-        """Reserved forced-landing hook for UAV roles.
+        """为 UAV 角色预留的强制降落钩子。
 
-        Put the real forced landing operation here, for example:
-        - call a MAVROS mode/land service
-        - publish a controller emergency command
-        - call your low-level safety node
+        在这里放置真实的强制降落操作，例如：
+        - 调用 MAVROS 模式/降落服务
+        - 发布控制器紧急命令
+        - 调用底层安全节点
 
-        This function is called when the local UAV FSM enters ABORT. GCS does
-        not execute local landing here; it broadcasts abort to traj_router/UAVs.
+        本地 UAV FSM 进入 ABORT 时会调用该函数。GCS 不在这里执行本地降落；
+        它会向 traj_router/UAV 广播 abort。
         """
         if self.is_gcs:
             return
@@ -781,26 +774,25 @@ class CoopFSM:
         )
 
     # ==================================================================
-    # User extension hooks
+    # 用户扩展钩子
     # ==================================================================
-    # These hooks are intentionally no-op in the base implementation. They
-    # are the recommended places for experiment-specific code:
+    # 这些钩子在基础实现中有意保持空操作。它们是推荐放置实验专用代码的位置：
     #
-    #   - on_enter_*: one-shot work when a state is entered.
-    #   - on_tick_* : periodic work while the FSM remains in a state.
+    #   - on_enter_*：进入某个状态时执行的一次性工作。
+    #   - on_tick_* ：FSM 保持在某个状态期间执行的周期性工作。
     #
-    # Examples:
-    #   - switch a controller mode when entering TRAJ_FOLLOWING
-    #   - publish a hold command every tick in WAIT
-    #   - send a hardware trigger when entering LAND
+    # 示例：
+    #   - 进入 TRAJ_FOLLOWING 时切换控制器模式
+    #   - 在 WAIT 中每个周期发布悬停命令
+    #   - 进入 LAND 时发送硬件触发
     #
-    # Keep transition decisions in _tick_gcs/_tick_uav. Keep side effects here.
+    # 将状态转移决策保留在 _tick_gcs/_tick_uav 中。副作用放在这里。
 
     def _on_enter_state(self, new_state: str, old_state: str, reason: str):
-        """Dispatch state-entry hooks.
+        """分发状态进入钩子。
 
-        Add shared logging/metrics around hooks here if needed. For actual
-        state-specific user code, edit the on_enter_<state>() methods below.
+        如有需要，可在这里为所有钩子添加统一日志/指标。
+        实际与具体状态相关的用户代码，请编辑下面的 on_enter_<state>() 方法。
         """
         handler = {
             PREPARE: self.on_enter_prepare,
@@ -817,7 +809,7 @@ class CoopFSM:
             handler(old_state, reason)
 
     def _run_state_action_hook(self):
-        """Run the periodic hook for the current state."""
+        """运行当前状态对应的周期性钩子。"""
         handler = {
             PREPARE: self.on_tick_prepare,
             WAIT_TAKEOFF: self.on_tick_wait_takeoff,
@@ -833,98 +825,96 @@ class CoopFSM:
             handler()
 
     def on_enter_prepare(self, old_state: str, reason: str):
-        """Hook: entered PREPARE.
+        """钩子：进入 PREPARE。
 
-        Add one-shot reset work here. Typical additions: clear local controller
-        state, reset a planner, or prepare sensors before self-check.
+        在这里添加一次性复位工作。常见扩展包括：清除本地控制器状态、
+        复位规划器，或在自检前准备传感器。
         """
 
     def on_enter_wait_takeoff(self, old_state: str, reason: str):
-        """Hook: GCS entered WAIT_TAKEOFF.
+        """钩子：GCS 进入 WAIT_TAKEOFF。
 
-        Add GCS-side UI/notification work here if you want an external display
-        or buzzer to show "all checks pending / ready for takeoff".
+        如果希望外部显示器或蜂鸣器提示“正在等待所有检查/准备起飞”，
+        可在这里添加 GCS 侧 UI/通知工作。
         """
 
     def on_enter_takeoff_running(self, old_state: str, reason: str):
-        """Hook: entered TAKEOFF_RUNNING.
+        """钩子：进入 TAKEOFF_RUNNING。
 
-        UAV note: before GCS sends takeoff_started, this state means "prepared
-        and waiting, no local control action required". After takeoff_started,
-        traj_router is expected to generate the actual takeoff trajectory.
+        UAV 注意：在 GCS 发送 takeoff_started 前，该状态表示“已准备并等待，
+        无需本地控制动作”。takeoff_started 之后，预期由 traj_router 生成实际起飞轨迹。
         """
 
     def on_enter_achieve(self, old_state: str, reason: str):
-        """Hook: UAV entered ACHIEVE.
+        """钩子：UAV 进入 ACHIEVE。
 
-        Add one-shot operations here if the UAV must latch any state exactly at
-        takeoff completion before reporting achieve to GCS.
+        如果 UAV 必须在起飞完成且上报 achieve 给 GCS 前精确锁存某些状态，
+        可在这里添加一次性操作。
         """
 
     def on_enter_wait(self, old_state: str, reason: str):
-        """Hook: UAV entered WAIT after reporting ACHIEVE.
+        """钩子：UAV 上报 ACHIEVE 后进入 WAIT。
 
-        Add hold/idle setup here if your controller needs a mode switch while
-        waiting for GCS to command TRAJ_FOLLOWING.
+        如果控制器在等待 GCS 下发 TRAJ_FOLLOWING 期间需要切换到保持/空闲模式，
+        可在这里添加相关设置。
         """
 
     def on_enter_traj_following(self, old_state: str, reason: str):
-        """Hook: entered TRAJ_FOLLOWING.
+        """钩子：进入 TRAJ_FOLLOWING。
 
-        This is the natural place to switch your local controller into tracking
-        mode. The current FSM only changes state; it does not command the
-        controller directly.
+        这里是将本地控制器切换到跟踪模式的自然位置。当前 FSM 只切换状态；
+        不会直接向控制器发送命令。
         """
 
     def on_enter_stop(self, old_state: str, reason: str):
-        """Hook: GCS entered STOP.
+        """钩子：GCS 进入 STOP。
 
-        Add one-shot GCS-side "waiting for land confirmation" behavior here.
+        可在这里添加 GCS 侧“等待降落确认”的一次性行为。
         """
 
     def on_enter_land(self, old_state: str, reason: str):
-        """Hook: entered LAND.
+        """钩子：进入 LAND。
 
-        Add one-shot land setup here if nominal landing needs an interface call.
-        Forced landing for ABORT belongs in force_land().
+        如果正常降落需要调用接口，可在这里添加一次性降落设置。
+        ABORT 的强制降落逻辑属于 force_land()。
         """
 
     def on_enter_abort(self, old_state: str, reason: str):
-        """Hook: entered ABORT.
+        """钩子：进入 ABORT。
 
-        Add extra alarm/logging work here. The local forced landing hook is
-        force_land(), which has already been called by _set_state().
+        可在这里添加额外报警/日志工作。本地强制降落钩子是 force_land()，
+        它已经由 _set_state() 调用。
         """
 
     def on_tick_prepare(self):
-        """Hook: periodic work while in PREPARE."""
+        """钩子：处于 PREPARE 时的周期性工作。"""
 
     def on_tick_wait_takeoff(self):
-        """Hook: periodic GCS work while waiting for prepared + takeoff confirm."""
+        """钩子：等待 prepared 与起飞确认时的 GCS 周期性工作。"""
 
     def on_tick_takeoff_running(self):
-        """Hook: periodic work while in TAKEOFF_RUNNING."""
+        """钩子：处于 TAKEOFF_RUNNING 时的周期性工作。"""
 
     def on_tick_achieve(self):
-        """Hook: periodic work while in ACHIEVE."""
+        """钩子：处于 ACHIEVE 时的周期性工作。"""
 
     def on_tick_wait(self):
-        """Hook: periodic UAV work while waiting for TRAJ_FOLLOWING."""
+        """钩子：等待 TRAJ_FOLLOWING 时的 UAV 周期性工作。"""
 
     def on_tick_traj_following(self):
-        """Hook: periodic work while in TRAJ_FOLLOWING."""
+        """钩子：处于 TRAJ_FOLLOWING 时的周期性工作。"""
 
     def on_tick_stop(self):
-        """Hook: periodic GCS work while waiting for land confirmation."""
+        """钩子：等待降落确认时的 GCS 周期性工作。"""
 
     def on_tick_land(self):
-        """Hook: periodic work while in LAND."""
+        """钩子：处于 LAND 时的周期性工作。"""
 
     def on_tick_abort(self):
-        """Hook: periodic work while in ABORT."""
+        """钩子：处于 ABORT 时的周期性工作。"""
 
     def _start_takeoff_from_gcs(self):
-        """GCS starts the takeoff phase after all UAVs are prepared."""
+        """所有 UAV 准备完成后，GCS 启动起飞阶段。"""
         payload = {
             "height": self.takeoff_height,
             "duration": self.takeoff_duration,
@@ -938,28 +928,28 @@ class CoopFSM:
             self._broadcast_to_uavs("takeoff_started", payload)
 
     def _start_traj_following_from_gcs(self):
-        """GCS starts the main trajectory-following phase after all UAVs achieve."""
+        """所有 UAV achieve 后，GCS 启动主轨迹跟踪阶段。"""
         payload = {"participants": self.participants}
         self._send_to_traj_router("traj_following", payload)
         self._broadcast_to_uavs("traj_following", payload)
         self._set_state(TRAJ_FOLLOWING, "all_uavs_achieved")
 
     def _start_land_from_gcs(self):
-        """GCS starts nominal landing after STOP and operator confirmation."""
+        """STOP 后且操作员确认后，GCS 启动正常降落。"""
         payload = {"participants": self.participants}
         self._send_to_traj_router("land", payload)
         self._broadcast_to_uavs("land", payload)
         self._set_state(LAND, "manual_land_confirmed")
 
     def _takeoff_reached(self) -> bool:
-        """UAV takeoff completion condition.
+        """UAV 起飞完成条件。
 
-        Default behavior accepts either:
-        - height is within takeoff_reached_tolerance of takeoff_height, or
-        - takeoff_duration + takeoff_timeout_margin elapsed after takeoff_started.
+        默认行为接受以下任一条件：
+        - 高度与 takeoff_height 的差值不超过 takeoff_reached_tolerance，或
+        - takeoff_started 后经过 takeoff_duration + takeoff_timeout_margin。
 
-        Modify this function if your real vehicle uses another altitude sign
-        convention or a better "takeoff complete" signal.
+        如果真实飞行器使用其他高度符号约定，或有更好的“起飞完成”信号，
+        请修改本函数。
         """
         height_reached = False
         if self.current_uav_state is not None:
@@ -974,7 +964,7 @@ class CoopFSM:
         return height_reached or timed_out
 
     def _reset_for_next_round(self, reason: str):
-        """Clear per-round latches before returning to PREPARE."""
+        """返回 PREPARE 前，清除单轮任务锁存状态。"""
         self.prepared_uavs.clear()
         self.achieved_uavs.clear()
         self.prepared_sent = False
@@ -997,10 +987,10 @@ class CoopFSM:
         self._set_state(PREPARE, reason)
 
     def _tick_gcs(self, keyboard_commands: List[str]):
-        """GCS transition logic.
+        """GCS 状态转移逻辑。
 
-        Keep this method focused on *when* the GCS should change state. Add
-        one-shot/per-tick side effects in the hooks above.
+        让本方法专注于判断 GCS *何时* 应该切换状态。
+        一次性/周期性副作用请添加到上面的钩子中。
         """
         if self.state == PREPARE:
             self._set_state(WAIT_TAKEOFF, "gcs_skip_prepare_check")
@@ -1027,10 +1017,10 @@ class CoopFSM:
             return
 
     def _tick_uav(self):
-        """MASTER/SLAVE transition logic.
+        """MASTER/SLAVE 状态转移逻辑。
 
-        Keep this method focused on *when* the UAV should change state. Add
-        controller or hardware commands in on_enter_* / on_tick_* hooks.
+        让本方法专注于判断 UAV *何时* 应该切换状态。
+        控制器或硬件命令请添加到 on_enter_* / on_tick_* 钩子中。
         """
         if self.state == PREPARE:
             if self._health_ok():
@@ -1071,7 +1061,7 @@ class CoopFSM:
             return
 
     def _status_payload(self) -> Dict[str, Any]:
-        """Build dashboard status JSON published on status_topic."""
+        """构建发布到 status_topic 的仪表盘状态 JSON。"""
         t = now_sec()
         z = None
         if self.current_uav_state is not None:
@@ -1121,7 +1111,7 @@ class CoopFSM:
         }
 
     def _publish_status(self):
-        """Publish dashboard status at status_rate_hz."""
+        """按 status_rate_hz 发布仪表盘状态。"""
         t = now_sec()
         if t - self.last_status_pub_time < self.status_pub_period:
             return
@@ -1129,13 +1119,13 @@ class CoopFSM:
         self.status_pub.publish(String(json_dumps(self._status_payload())))
 
     def spin(self):
-        """Main FSM loop.
+        """FSM 主循环。
 
-        Ordering per cycle:
-        1. Read operator/keyboard/RC abort input.
-        2. Run the user periodic hook for the current state.
-        3. Run role-specific transition logic.
-        4. Publish status for Rich/rosbag.
+        每个周期的执行顺序：
+        1. 读取操作员/键盘/RC 中止输入。
+        2. 运行当前状态的用户周期性钩子。
+        3. 运行按角色区分的状态转移逻辑。
+        4. 发布供 Rich/rosbag 使用的状态。
         """
         rate = rospy.Rate(self.control_rate_hz)
         try:
