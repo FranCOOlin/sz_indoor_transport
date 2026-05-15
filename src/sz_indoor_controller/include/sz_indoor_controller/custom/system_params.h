@@ -387,6 +387,7 @@ namespace common
         double quadrotor_mq, quadrotor_kr, quadrotor_hr;
         Eigen::Vector3d quadrotor_kp;   // [kpx, kpy, kpz]
         Eigen::Vector3d quadrotor_kv;   // [kvx, kvy, kvz]
+        double quadrotor_ki_z;      // Z轴积分增益
 
         // For QSLS saturated backstepping controller
         double QSLS_bar_mQ;
@@ -493,6 +494,12 @@ namespace common
             {
                 ROS_WARN("Failed to get parameter: %s",
                          (uav_id + "/controller/quadrotor/kv").c_str());
+            }
+            
+            // 添加积分参数读取
+            if (!nh.getParam(uav_id + "/controller/quadrotor/ki_z", quadrotor_ki_z))
+            {
+                ROS_WARN("Failed to get parameter: %s/controller/quadrotor/ki_z, using default 0.5", uav_id.c_str());
             }
 
             if (!nh.getParam(uav_id + "/controller/quadrotor/kr", quadrotor_kr))

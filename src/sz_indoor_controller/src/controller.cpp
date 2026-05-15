@@ -337,6 +337,7 @@ int main(int argc, char **argv)
   common::QSLSState qsls_state;
   common::MyTrajectory trajectory;
   common::QuadrotorControlInput control_input;
+  double integral_z;
 
   // 加载参数文件
   if (!params.loadFromFile(file_path))
@@ -391,7 +392,7 @@ int main(int argc, char **argv)
   ROS_INFO("%s controller/qsls/kr = %f", uav_id.c_str(), params.QSLS_kr);
 
   // 初始化 MyController 对象（作为 Controller 的派生类），传入对象引用及用户自定义控制函数 myControlFunction
-  controller::QuadrotorControllerGanYu quadrotor_ctrl(params, quadrotor_state, trajectory, control_input);
+  controller::QuadrotorControllerGanYu quadrotor_ctrl(params, quadrotor_state, trajectory, control_input, integral_z);
   controller::SaturatedBackstepping qsls_ctrl(params, qsls_state, trajectory, control_input);
   // 初始化 ControllerScheduler 对象（栈变量），先注册 Controller，再调用 switchController
   controller::ControllerScheduler scheduler;
@@ -418,6 +419,7 @@ int main(int argc, char **argv)
     ros::Publisher local_rate_pub = nh.advertise<geometry_msgs::TwistStamped>(uav_id + "/mavros/setpoint_attitude/cmd_vel", 10);
     ros::Publisher local_thrust_pub = nh.advertise<mavros_msgs::Thrust>(uav_id + "/mavros/setpoint_attitude/thrust", 10);
     ros::Publisher control_pub = nh.advertise<sz_indoor_controller::UAVCommand>(uav_id + "/control", 10);
+    ros::Publisher control_int_pub = nh.advertise<std_msgs::Float64>(uav_id + "/control/integral", 10);
 
     // 订阅 MAVROS 状态话题，话题名称为 uav_id + "/mavros/state"，需要px4.launch也在uav_id的ns下
     ros::Subscriber status_sub = nh.subscribe<mavros_msgs::State>(uav_id + "/mavros/state", 10, status_cb);
@@ -479,6 +481,12 @@ int main(int argc, char **argv)
         command_msg.omega.z = control_input.omega(2);
         // 发送控制指令到仿真环境
         control_pub.publish(command_msg);
+        
+        std_msgs::Float64 integral_msg;
+        integral_msg.data = integral_z;
+        control_int_pub.publish(integral_msg);
+        
+        
       }
       i=(++i)%prescaler;
       // DEV_GPIO_Write(17, DEV_GPIO_LOW);
