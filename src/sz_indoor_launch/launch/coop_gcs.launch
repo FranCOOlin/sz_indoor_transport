@@ -54,7 +54,7 @@
     <arg name="launch_trajectory_node" default="true"/>
     <arg name="traj_router_output" default="screen"/>
     <arg name="trajectory_node_output" default="screen"/>
-    <arg name="trajectory_omega" default="0.3"/>
+    <arg name="trajectory_omega" default="0.1"/>
     <arg name="traj_router_uav_id" default="/$(arg master_id)"/>
     <arg name="traj_router_landing_duration" default="5.0"/>
 
