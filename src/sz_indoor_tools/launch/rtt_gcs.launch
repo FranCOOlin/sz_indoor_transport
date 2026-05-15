@@ -1,0 +1,34 @@
+<launch>
+    <!-- Run this on the GCS side. It publishes ping messages and reports RTT. -->
+
+    <arg name="uav_id" default="uav0"/>
+    <arg name="topic_prefix" default="/rtt/$(arg uav_id)"/>
+    <arg name="ping_topic" default="$(arg topic_prefix)/ping"/>
+    <arg name="pong_topic" default="$(arg topic_prefix)/pong"/>
+    <arg name="latency_topic" default="$(arg topic_prefix)/rtt_ms"/>
+
+    <arg name="rate_hz" default="10.0"/>
+    <arg name="timeout_sec" default="1.0"/>
+    <arg name="report_interval" default="1.0"/>
+    <arg name="window_size" default="100"/>
+    <arg name="warn_rtt_ms" default="0.0"/>
+    <arg name="queue_size" default="100"/>
+    <arg name="node_output" default="screen"/>
+
+    <node pkg="sz_indoor_tools"
+          type="rtt_test.py"
+          name="rtt_gcs_$(arg uav_id)"
+          output="$(arg node_output)">
+        <param name="role" value="gcs"/>
+        <param name="uav_id" value="$(arg uav_id)"/>
+        <param name="ping_topic" value="$(arg ping_topic)"/>
+        <param name="pong_topic" value="$(arg pong_topic)"/>
+        <param name="latency_topic" value="$(arg latency_topic)"/>
+        <param name="rate_hz" value="$(arg rate_hz)"/>
+        <param name="timeout_sec" value="$(arg timeout_sec)"/>
+        <param name="report_interval" value="$(arg report_interval)"/>
+        <param name="window_size" value="$(arg window_size)"/>
+        <param name="warn_rtt_ms" value="$(arg warn_rtt_ms)"/>
+        <param name="queue_size" value="$(arg queue_size)"/>
+    </node>
+</launch>

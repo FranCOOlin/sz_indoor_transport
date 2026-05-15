@@ -1,0 +1,24 @@
+<launch>
+    <!-- Run this on the UAV side. It echoes ping messages back to the GCS. -->
+
+    <arg name="uav_id" default="uav0"/>
+    <arg name="topic_prefix" default="/rtt/$(arg uav_id)"/>
+    <arg name="ping_topic" default="$(arg topic_prefix)/ping"/>
+    <arg name="pong_topic" default="$(arg topic_prefix)/pong"/>
+
+    <arg name="report_interval" default="1.0"/>
+    <arg name="queue_size" default="100"/>
+    <arg name="node_output" default="screen"/>
+
+    <node pkg="sz_indoor_tools"
+          type="rtt_test.py"
+          name="rtt_uav_$(arg uav_id)"
+          output="$(arg node_output)">
+        <param name="role" value="uav"/>
+        <param name="uav_id" value="$(arg uav_id)"/>
+        <param name="ping_topic" value="$(arg ping_topic)"/>
+        <param name="pong_topic" value="$(arg pong_topic)"/>
+        <param name="report_interval" value="$(arg report_interval)"/>
+        <param name="queue_size" value="$(arg queue_size)"/>
+    </node>
+</launch>
