@@ -99,12 +99,18 @@ void feedbackCallback(const geometry_msgs::PoseStamped::ConstPtr &msg, common::N
     measurement.p = R1 * p_;
     Eigen::Quaterniond quat(R);
     measurement.attitude = quat;
+    measurement.time = msg->header.stamp.isZero() ? ros::Time::now().toSec() : msg->header.stamp.toSec();
+    measurement.pose_updated = true;
+    measurement.updated = true;
 }
 void simuFeedbackCallback(const sz_indoor_controller::UAVState::ConstPtr &msg, common::NokovWithForce &measurement)
 {
     // 从消息中提取位置和姿态
     measurement.p = Eigen::Vector3d(msg->position.x, msg->position.y, msg->position.z);
     measurement.attitude = Eigen::Quaterniond(msg->attitude.w, msg->attitude.x, msg->attitude.y, msg->attitude.z);
+    measurement.time = ros::Time::now().toSec();
+    measurement.pose_updated = true;
+    measurement.updated = true;
     // ROS_INFO("Feedback received: p = %f %f %f, q = %f %f %f %f", measurement.p(0), measurement.p(1), measurement.p(2), measurement.attitude.w(), measurement.attitude.x(), measurement.attitude.y(), measurement.attitude.z());
 }
 
@@ -122,6 +128,9 @@ void QSLSpQFeedbackCallback(const geometry_msgs::PoseStamped::ConstPtr &msg, com
     measurement.p = R1 * pQ_;
     Eigen::Quaterniond quat(R);
     measurement.attitude = quat;
+    measurement.time = msg->header.stamp.isZero() ? ros::Time::now().toSec() : msg->header.stamp.toSec();
+    measurement.pose_updated = true;
+    measurement.updated = true;
     // ROS_INFO("Feedback received: p = %+.5f %+.5f %+.5f, q = %+.5f %+.5f %+.5f %+.5f", measurement.p(0), measurement.p(1), measurement.p(2), measurement.attitude.w(), measurement.attitude.x(), measurement.attitude.y(), measurement.attitude.z());
 }
 
@@ -139,6 +148,9 @@ void simuQSLSpQFeedbackCallback(const sz_indoor_controller::UAVState::ConstPtr &
     // 从消息中提取位置和姿态
     measurement.p = Eigen::Vector3d(msg->position.x, msg->position.y, msg->position.z);
     measurement.attitude = Eigen::Quaterniond(msg->attitude.w, msg->attitude.x, msg->attitude.y, msg->attitude.z);
+    measurement.time = ros::Time::now().toSec();
+    measurement.pose_updated = true;
+    measurement.updated = true;
     // ROS_INFO("Feedback received: p = %+.5f %+.5f %+.5f, q = %+.5f %+.5f %+.5f %+.5f", measurement.p(0), measurement.p(1), measurement.p(2), measurement.attitude.w(), measurement.attitude.x(), measurement.attitude.y(), measurement.attitude.z());
 }
 

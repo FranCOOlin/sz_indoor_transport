@@ -13,8 +13,17 @@ public:
     Eigen::Quaterniond attitude; // 姿态测量值（四元数）
     Eigen::Vector3d fc;       // 力测量值（3D 向量）
     double time;                // 时间戳
+    bool pose_updated;          // 位置/姿态是否有新测量
     // 构造函数：初始化位置、姿态和更新标志
-    NokovWithForce() : p(Eigen::Vector3d::Zero()), attitude(Eigen::Quaterniond::Identity()) {updated = false;}
+    NokovWithForce()
+        : p(Eigen::Vector3d::Zero()),
+          attitude(Eigen::Quaterniond::Identity()),
+          fc(Eigen::Vector3d::Zero()),
+          time(-1.0),
+          pose_updated(false)
+    {
+        updated = false;
+    }
 
 };
 

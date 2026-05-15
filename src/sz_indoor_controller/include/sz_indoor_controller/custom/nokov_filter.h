@@ -9,7 +9,10 @@
 #include "sz_indoor_controller/custom/quadrotor_control_input.h"
 #include <boost/numeric/odeint.hpp>
 #include <eigen3/Eigen/Dense>
+#include <algorithm>
 #include <deque>
+#include <limits>
+#include <vector>
 
 namespace observer {
 
@@ -33,12 +36,15 @@ public:
 
     // 构造函数：接收 Params、State 和 Measurement 的引用
     NokovFilter(common::SystemParams &_params, common::QuadrotorState &_state, common::NokovWithForce &_measurement, common::QuadrotorControlInput &_control_input, bool _simu)
-        : params(_params), state(_state), measurement(_measurement),control_input(_control_input), integrator(std::bind(&NokovFilter::f, this,std::placeholders::_1,std::placeholders::_2,std::placeholders::_3,std::ref(params), std::ref(control_input)), 0.01),simu(_simu), p_old(Eigen::Vector3d::Zero()), R_old(Eigen::Matrix3d::Identity()), vi_old(Eigen::Vector3d::Zero()), omega_old(Eigen::Vector3d::Zero()){}
+        : params(_params), state(_state), measurement(_measurement),control_input(_control_input), integrator(std::bind(&NokovFilter::f, this,std::placeholders::_1,std::placeholders::_2,std::placeholders::_3,std::ref(params), std::ref(control_input)), 0.01),simu(_simu), p_old(Eigen::Vector3d::Zero()), R_old(Eigen::Matrix3d::Identity()), vi_old(Eigen::Vector3d::Zero()), omega_old(Eigen::Vector3d::Zero())
+    {
+        last_update_time = -1.0;
+    }
 
     // 中值计算函数（适用于 Vector3d）
     Eigen::Vector3d calculateMedian(std::deque<Eigen::Vector3d>& window) {
-        // if (window.size() < 5) return window.back();  // 如果窗口未满，返回最新值
-        if (window.size() < 5) return Eigen::Vector3d::Zero();  // 如果窗口未满，返回零向量
+        if (window.empty()) return Eigen::Vector3d::Zero();
+        if (window.size() < 5) return window.back();  // 如果窗口未满，返回最新值
 
         Eigen::Vector3d median;
         for (int i = 0; i < 3; ++i) { // 对每个维度分别计算中值
@@ -69,7 +75,7 @@ public:
 
     // 计算当前状态
     void calculateState(Eigen::Vector3d& p, Eigen::Vector3d& vi, Eigen::Vector3d& vb, Eigen::Matrix3d& R, Eigen::Vector3d& omega,
-        Eigen::Vector3d& p_current, Eigen::Quaterniond& q_current, Eigen::Vector3d& p_old, Eigen::Matrix3d R_old, Eigen::Vector3d vi_old, Eigen::Vector3d omega_old, double last_time, bool zDown = false) {
+        Eigen::Vector3d& p_current, Eigen::Quaterniond& q_current, Eigen::Vector3d& p_old, Eigen::Matrix3d& R_old, Eigen::Vector3d& vi_old, Eigen::Vector3d& omega_old, double current_time, double last_time, bool zDown = false) {
         // 固定旋转矩阵 R1
         // Eigen::Matrix3d R1;
         // R1 << 1, 0,  0,
@@ -92,10 +98,10 @@ public:
         
 
         // 时间增量
-        double delta_t = ros::Time::now().toSec() - last_time;
+        double delta_t = current_time - last_time;
 
         // 如果 delta_t 太小，返回上次的状态
-        if (delta_t < std::numeric_limits<double>::epsilon()) {
+        if (delta_t < 1e-6) {
             p = p_old;
             vi = vi_old;
             vb = R.transpose() * vi_old;
@@ -132,6 +138,15 @@ public:
     }
     // 实现具体的 update() 函数：估计系统状态并更新 state
     void update() override {
+        if (!measurement.pose_updated) {
+            return;
+        }
+
+        const double t = measurement.time;
+        if (t < 0.0) {
+            measurement.pose_updated = false;
+            return;
+        }
 
         //从state转换为std::vector<double>
         // Eigen::VectorXd eigen_vec(state.p.size()+state.q.size());
@@ -140,7 +155,32 @@ public:
 
         Eigen::Vector3d p, vi, vb, omega;
         Eigen::Matrix3d R;
-        calculateState(p, vi, vb, R, omega, measurement.p,measurement.attitude, p_old, R_old, vi_old, omega_old, last_update_time);
+        if (last_update_time < 0.0) {
+            p_old = measurement.p;
+            R_old = q2R(measurement.attitude);
+            vi_old.setZero();
+            omega_old.setZero();
+            last_update_time = t;
+            measurement.pose_updated = false;
+            updateWindow(position_window, p_old);
+            updateWindow(velocity_window, vi_old);
+            state.p = p_old;
+            state.vi = vi_old;
+            state.vb = vi_old;
+            state.q = measurement.attitude;
+            state.R = R_old;
+            state.omega = omega_old;
+            state.euler = R_old.eulerAngles(2, 1, 0);
+            state.updated = true;
+            return;
+        }
+
+        if (t - last_update_time < 1e-6) {
+            measurement.pose_updated = false;
+            return;
+        }
+
+        calculateState(p, vi, vb, R, omega, measurement.p,measurement.attitude, p_old, R_old, vi_old, omega_old, t, last_update_time);
             // 更新滑动窗口
         updateWindow(position_window, p);
         updateWindow(velocity_window, vi);
@@ -149,10 +189,10 @@ public:
         Eigen::Vector3d velocity_median = calculateMedian(velocity_window);
     // 发布新状态
         // 通过积分器对状态进行计算
-        double t = ros::Time::now().toSec();
         // integrator.integrate(int_vec, 0.0, t-last_update_time);
         state.updated = true;
         last_update_time = t;
+        measurement.pose_updated = false;
 
         state.p = position_median;
         state.vi = velocity_median;
