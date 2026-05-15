@@ -71,7 +71,7 @@ public:
             flag_subs[i] = nh.subscribe<std_msgs::Bool>(
                 flag_topic, 1, boost::bind(&FormationPlanner::flagCallback, this, _1, static_cast<int>(i)));
 
-            std::string state_topic = uav_ns + "/quadrotor_state";
+            std::string state_topic = uav_ns + "/init_state";
             state_subs[i] = nh.subscribe<std_msgs::Float64MultiArray>(
                 state_topic, 10, boost::bind(&FormationPlanner::stateCallback, this, _1, static_cast<int>(i)));
 
@@ -141,8 +141,9 @@ public:
 
     void stateCallback(const std_msgs::Float64MultiArray::ConstPtr& msg, int index) {
         if (msg->data.size() >= 3) {
-            current_pos[index] << msg->data[0], msg->data[1], msg->data[2];
+            current_pos[index] << -msg->data[0], msg->data[1], -msg->data[2];
         }
+        
     }
 
     void trajectoryRequestCallback(const std_msgs::String::ConstPtr& msg) {
