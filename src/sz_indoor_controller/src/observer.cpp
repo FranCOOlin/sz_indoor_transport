@@ -103,13 +103,27 @@ void feedbackCallback(const geometry_msgs::PoseStamped::ConstPtr &msg, common::N
     measurement.pose_updated = true;
     measurement.updated = true;
 }
+
+void velocityCallback(const geometry_msgs::TwistStamped::ConstPtr &msg, common::NokovWithForce &measurement)
+{
+    Eigen::Vector3d vi_ = Eigen::Vector3d(msg->twist.linear.x, msg->twist.linear.y, msg->twist.linear.z);
+    Eigen::Matrix3d R1;
+    R1 << 1, 0, 0,
+        0, 1, 0,
+        0, 0, 1;
+    measurement.vi = R1 * vi_;
+    measurement.velocity_updated = true;
+}
+
 void simuFeedbackCallback(const sz_indoor_controller::UAVState::ConstPtr &msg, common::NokovWithForce &measurement)
 {
     // 从消息中提取位置和姿态
     measurement.p = Eigen::Vector3d(msg->position.x, msg->position.y, msg->position.z);
+    measurement.vi = Eigen::Vector3d(msg->velocity.x, msg->velocity.y, msg->velocity.z);
     measurement.attitude = Eigen::Quaterniond(msg->attitude.w, msg->attitude.x, msg->attitude.y, msg->attitude.z);
     measurement.time = ros::Time::now().toSec();
     measurement.pose_updated = true;
+    measurement.velocity_updated = true;
     measurement.updated = true;
     // ROS_INFO("Feedback received: p = %f %f %f, q = %f %f %f %f", measurement.p(0), measurement.p(1), measurement.p(2), measurement.attitude.w(), measurement.attitude.x(), measurement.attitude.y(), measurement.attitude.z());
 }
@@ -147,9 +161,11 @@ void simuQSLSpQFeedbackCallback(const sz_indoor_controller::UAVState::ConstPtr &
 {
     // 从消息中提取位置和姿态
     measurement.p = Eigen::Vector3d(msg->position.x, msg->position.y, msg->position.z);
+    measurement.vi = Eigen::Vector3d(msg->velocity.x, msg->velocity.y, msg->velocity.z);
     measurement.attitude = Eigen::Quaterniond(msg->attitude.w, msg->attitude.x, msg->attitude.y, msg->attitude.z);
     measurement.time = ros::Time::now().toSec();
     measurement.pose_updated = true;
+    measurement.velocity_updated = true;
     measurement.updated = true;
     // ROS_INFO("Feedback received: p = %+.5f %+.5f %+.5f, q = %+.5f %+.5f %+.5f %+.5f", measurement.p(0), measurement.p(1), measurement.p(2), measurement.attitude.w(), measurement.attitude.x(), measurement.attitude.y(), measurement.attitude.z());
 }
@@ -220,7 +236,9 @@ int main(int argc, char **argv)
         ros::Publisher qsls_observe_pub = nh.advertise<sz_indoor_controller::QSLSState>(uav_id + "/myqsls_state", 10);
         // 订阅动捕反馈话题
         std::string nokov_topic = "/vrpn_client_node/" + uav_id + "/pose";
+        std::string nokov_twist_topic = "/vrpn_client_node/" + uav_id + "/twist";
         ros::Subscriber quadrotor_feedback_sub = nh.subscribe<geometry_msgs::PoseStamped>(nokov_topic, 10, std::bind(feedbackCallback, std::placeholders::_1, std::ref(quadrotor_obs.measurement)));
+        ros::Subscriber quadrotor_velocity_sub = nh.subscribe<geometry_msgs::TwistStamped>(nokov_twist_topic, 10, std::bind(velocityCallback, std::placeholders::_1, std::ref(quadrotor_obs.measurement)));
         ros::Subscriber qsls_feedback_sub = nh.subscribe<geometry_msgs::PoseStamped>(nokov_topic, 10, std::bind(QSLSpQFeedbackCallback, std::placeholders::_1, std::ref(qsls_obs.measurement)));
 
         // 订阅无人机控制输入

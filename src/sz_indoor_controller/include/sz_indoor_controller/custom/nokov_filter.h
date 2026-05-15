@@ -125,8 +125,9 @@ public:
             ROS_WARN("Delta time too small, returning old state");
             return;
         }
-        // 计算惯性系速度
-        vi = (p_current - p_old) / delta_t;
+        // 速度改为直接使用 VRPN /twist，这里不再用位置差分估测。
+        // vi = (p_current - p_old) / delta_t;
+        vi = vi_old;
 
         // 计算旋转矩阵导数 R_dot = (R - R_old) / delta_t
         Eigen::Matrix3d skew_omega = R.transpose() * (R - R_old) / delta_t;
@@ -142,7 +143,7 @@ public:
         // 更新全局历史值
         p_old = p_current;
         R_old = R;
-        vi_old = vi;
+        // vi_old = vi;
         omega_old = omega;
     }
 
@@ -174,17 +175,17 @@ public:
         if (last_update_time < 0.0) {
             p_old = measurement.p;
             R_old = q2R(measurement.attitude);
-            vi_old.setZero();
+            vi_old = measurement.vi;
             omega_old.setZero();
             vi_lpf.setZero();
             velocity_lpf_initialized = true;
             last_update_time = t;
             measurement.pose_updated = false;
             updateWindow(position_window, p_old);
-            updateWindow(velocity_window, vi_old);
+            // updateWindow(velocity_window, vi_old);
             state.p = p_old;
             state.vi = vi_old;
-            state.vb = vi_old;
+            state.vb = R_old.transpose() * vi_old;
             state.q = measurement.attitude;
             state.R = R_old;
             state.omega = omega_old;
@@ -198,17 +199,19 @@ public:
             return;
         }
 
-        const double dt = t - last_update_time;
         calculateState(p, vi, vb, R, omega, measurement.p,measurement.attitude, p_old, R_old, vi_old, omega_old, t, last_update_time);
-        vi = lowPassVelocity(vi, dt);
+        // 原来这里对位置差分速度做一阶低通；现在直接使用 VRPN 的线速度。
+        // const double dt = t - last_update_time;
+        // vi = lowPassVelocity(vi, dt);
+        vi = measurement.vi;
         vb = R.transpose() * vi;
         vi_old = vi;
             // 更新滑动窗口
         updateWindow(position_window, p);
-        updateWindow(velocity_window, vi);
+        // updateWindow(velocity_window, vi);
         // 计算中值
         Eigen::Vector3d position_median = calculateMedian(position_window);
-        Eigen::Vector3d velocity_median = calculateMedian(velocity_window);
+        // Eigen::Vector3d velocity_median = calculateMedian(velocity_window);
     // 发布新状态
         // 通过积分器对状态进行计算
         // integrator.integrate(int_vec, 0.0, t-last_update_time);
@@ -217,8 +220,8 @@ public:
         measurement.pose_updated = false;
 
         state.p = position_median;
-        state.vi = velocity_median;
-        state.vb = R.transpose() * velocity_median;
+        state.vi = vi;
+        state.vb = vb;
         state.q = measurement.attitude;
         state.R = R;
         state.omega = omega;

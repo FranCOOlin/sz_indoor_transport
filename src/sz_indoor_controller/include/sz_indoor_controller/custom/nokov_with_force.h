@@ -10,17 +10,21 @@ namespace common {
 class NokovWithForce : public Measurement {
 public:
     Eigen::Vector3d p;       // 位置测量值（3D 向量）
+    Eigen::Vector3d vi;      // VRPN 线速度测量值（惯性系）
     Eigen::Quaterniond attitude; // 姿态测量值（四元数）
     Eigen::Vector3d fc;       // 力测量值（3D 向量）
     double time;                // 时间戳
     bool pose_updated;          // 位置/姿态是否有新测量
+    bool velocity_updated;      // 速度是否有新测量
     // 构造函数：初始化位置、姿态和更新标志
     NokovWithForce()
         : p(Eigen::Vector3d::Zero()),
+          vi(Eigen::Vector3d::Zero()),
           attitude(Eigen::Quaterniond::Identity()),
           fc(Eigen::Vector3d::Zero()),
           time(-1.0),
-          pose_updated(false)
+          pose_updated(false),
+          velocity_updated(false)
     {
         updated = false;
     }
