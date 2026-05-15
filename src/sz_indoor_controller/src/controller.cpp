@@ -340,18 +340,18 @@ int main(int argc, char **argv)
   double integral_z;
 
   // 加载参数文件
+  if (!params.loadFromRos(nh))
+  {
+    ROS_ERROR("Failed to load parameters from Ros.");
+    return -1;
+  }
+  
   if (!params.loadFromFile(file_path))
   {
     ROS_ERROR("Failed to load parameters from file.");
     return -1;
   }
   
-  if (!params.loadFromRos(nh))
-  {
-    ROS_ERROR("Failed to load parameters from Ros.");
-    return -1;
-  }
-
   // 打印加载的参数（仅示例）
   ROS_INFO("%s Loaded parameters:", uav_id.c_str());
   // ROS_INFO("%s controller/quadrotor/kp = %f", uav_id.c_str(), params.quadrotor_kp);

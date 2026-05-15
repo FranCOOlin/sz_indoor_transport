@@ -497,7 +497,7 @@ namespace common
             }
             
             // 添加积分参数读取
-            if (!nh.getParam(uav_id + "/controller/quadrotor/ki_z", quadrotor_ki_z))
+            if (!nh.getParam(uav_id + "_controller/controller/quadrotor/ki_z", quadrotor_ki_z))
             {
                 ROS_WARN("Failed to get parameter: %s/controller/quadrotor/ki_z, using default 0.5", uav_id.c_str());
             }
