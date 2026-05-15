@@ -29,6 +29,9 @@ public:
     Eigen::Matrix3d R_old; // 上次的旋转矩阵
     Eigen::Vector3d vi_old;         // 上次的速度
     Eigen::Vector3d omega_old;      // 上次的角速度
+    Eigen::Vector3d vi_lpf;         // 一阶低通后的惯性系速度
+    double velocity_lpf_tau;        // 速度一阶低通时间常数，单位 s
+    bool velocity_lpf_initialized;
     std::deque<Eigen::Vector3d> position_window;
     std::deque<Eigen::Vector3d> velocity_window;
     bool simu;
@@ -36,9 +39,10 @@ public:
 
     // 构造函数：接收 Params、State 和 Measurement 的引用
     NokovFilter(common::SystemParams &_params, common::QuadrotorState &_state, common::NokovWithForce &_measurement, common::QuadrotorControlInput &_control_input, bool _simu)
-        : params(_params), state(_state), measurement(_measurement),control_input(_control_input), integrator(std::bind(&NokovFilter::f, this,std::placeholders::_1,std::placeholders::_2,std::placeholders::_3,std::ref(params), std::ref(control_input)), 0.01),simu(_simu), p_old(Eigen::Vector3d::Zero()), R_old(Eigen::Matrix3d::Identity()), vi_old(Eigen::Vector3d::Zero()), omega_old(Eigen::Vector3d::Zero())
+        : params(_params), state(_state), measurement(_measurement),control_input(_control_input), integrator(std::bind(&NokovFilter::f, this,std::placeholders::_1,std::placeholders::_2,std::placeholders::_3,std::ref(params), std::ref(control_input)), 0.01),simu(_simu), p_old(Eigen::Vector3d::Zero()), R_old(Eigen::Matrix3d::Identity()), vi_old(Eigen::Vector3d::Zero()), omega_old(Eigen::Vector3d::Zero()), vi_lpf(Eigen::Vector3d::Zero()), velocity_lpf_tau(0.08), velocity_lpf_initialized(false)
     {
         last_update_time = -1.0;
+        ros::param::param("~velocity_lpf_tau", velocity_lpf_tau, velocity_lpf_tau);
     }
 
     // 中值计算函数（适用于 Vector3d）
@@ -71,6 +75,18 @@ public:
     // 四元数转旋转矩阵
     Eigen::Matrix3d q2R(const Eigen::Quaterniond& quat) {
         return quat.toRotationMatrix();
+    }
+
+    Eigen::Vector3d lowPassVelocity(const Eigen::Vector3d& raw_velocity, double dt) {
+        if (!velocity_lpf_initialized || velocity_lpf_tau <= 0.0 || dt <= 0.0) {
+            vi_lpf = raw_velocity;
+            velocity_lpf_initialized = true;
+            return vi_lpf;
+        }
+
+        const double alpha = dt / (velocity_lpf_tau + dt);
+        vi_lpf += alpha * (raw_velocity - vi_lpf);
+        return vi_lpf;
     }
 
     // 计算当前状态
@@ -160,6 +176,8 @@ public:
             R_old = q2R(measurement.attitude);
             vi_old.setZero();
             omega_old.setZero();
+            vi_lpf.setZero();
+            velocity_lpf_initialized = true;
             last_update_time = t;
             measurement.pose_updated = false;
             updateWindow(position_window, p_old);
@@ -180,7 +198,11 @@ public:
             return;
         }
 
+        const double dt = t - last_update_time;
         calculateState(p, vi, vb, R, omega, measurement.p,measurement.attitude, p_old, R_old, vi_old, omega_old, t, last_update_time);
+        vi = lowPassVelocity(vi, dt);
+        vb = R.transpose() * vi;
+        vi_old = vi;
             // 更新滑动窗口
         updateWindow(position_window, p);
         updateWindow(velocity_window, vi);
@@ -196,7 +218,7 @@ public:
 
         state.p = position_median;
         state.vi = velocity_median;
-        state.vb = vb;
+        state.vb = R.transpose() * velocity_median;
         state.q = measurement.attitude;
         state.R = R;
         state.omega = omega;

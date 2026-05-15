@@ -32,6 +32,7 @@
     <arg name="observer_param" default="some_value"/>
     <arg name="controller_rate" default="200"/>
     <arg name="observer_rate" default="200"/>
+    <arg name="velocity_lpf_tau" default="0.08"/>
     <arg name="prescaler" default="1"/>
     <arg name="controller_output" default="screen"/>
     <arg name="observer_output" default="log"/>
@@ -121,6 +122,7 @@
             <param name="simulation" value="$(arg simulation)"/>
             <param name="file_path" value="$(arg controller_file_path)"/>
             <param name="observer_rate" value="$(arg observer_rate)"/>
+            <param name="velocity_lpf_tau" value="$(arg velocity_lpf_tau)"/>
         </node>
 
         <!-- 原 sys_20260323.launch 逻辑 4：仿真模式下启动 simuQSLS.py，替代真实 MAVROS 输入。 -->
