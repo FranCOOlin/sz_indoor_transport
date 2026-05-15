@@ -1,6 +1,11 @@
 #include <ros/ros.h>
 #include <Eigen/Dense>
+#include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <sstream>
+#include <string>
+#include <vector>
 #include <std_msgs/Bool.h>
 #include <std_msgs/String.h>
 #include <std_msgs/Float64MultiArray.h>
@@ -9,20 +14,23 @@
 class FormationPlanner {
 private:
     ros::NodeHandle nh;
-    ros::Publisher traj_pub[4];
-    ros::Subscriber flag_subs[4];
-    ros::Subscriber state_subs[4];
+    std::vector<ros::Publisher> traj_pub;
+    std::vector<ros::Subscriber> flag_subs;
+    std::vector<ros::Subscriber> state_subs;
     ros::Subscriber trajectory_request_sub;
     ros::Timer timer;
 
   
-    Eigen::Vector3d current_pos[4];    
-    Eigen::Vector3d d_offsets[4];      
-    Eigen::Vector3d circle_formation_offsets[4];
-    Eigen::Vector3d eight_formation_offsets[4];
-    Eigen::Vector3d virtual_eight_formation_offsets[4];
-    int uav_ids[4] = {0, 1, 3, 4};     
-    bool ready_flags[4] = {false, false, false, false};
+    std::vector<std::string> uav_names;
+    std::string master_id;
+    int master_index = 0;
+
+    std::vector<Eigen::Vector3d> current_pos;    
+    std::vector<Eigen::Vector3d> d_offsets;      
+    std::vector<Eigen::Vector3d> circle_formation_offsets;
+    std::vector<Eigen::Vector3d> eight_formation_offsets;
+    std::vector<Eigen::Vector3d> virtual_eight_formation_offsets;
+    std::vector<bool> ready_flags;
     bool all_ready = false;
     bool trajectory_request_received = false;
     bool trajectory_started = false;
@@ -40,31 +48,90 @@ private:
 public:
     FormationPlanner() {
         ros::NodeHandle pnh("~");
+        std::string participants;
+        pnh.param<std::string>("master_id", master_id, "uav0");
+        pnh.param<std::string>("participants", participants, "uav0,uav1,uav2,uav3");
         pnh.param("omega", omega, omega);
         circle_center << 0.0, 0.0, 0.0;
         trajectory_request_sub = nh.subscribe<std_msgs::String>(
             "/trajectory_request", 1, &FormationPlanner::trajectoryRequestCallback, this);
 
-        for (int i = 0; i < 4; ++i) {
-            int id = uav_ids[i];
-            std::string uav_ns = "/uav17" + std::to_string(id);
+        parseParticipants(participants);
+        initializeStorage();
+
+        for (size_t i = 0; i < uav_names.size(); ++i) {
+            std::string uav_ns = "/" + uav_names[i];
             traj_pub[i] = nh.advertise<sz_indoor_controller::TrajPoint>(uav_ns + "/planning/traj_point", 10);
 
-            std::string flag_topic = "/uav17" + std::to_string(id) + "/traj_generation_flag";
+            std::string flag_topic = uav_ns + "/traj_generation_flag";
             flag_subs[i] = nh.subscribe<std_msgs::Bool>(
-                flag_topic, 1, boost::bind(&FormationPlanner::flagCallback, this, _1, i));
+                flag_topic, 1, boost::bind(&FormationPlanner::flagCallback, this, _1, static_cast<int>(i)));
 
             std::string state_topic = uav_ns + "/quadrotor_state";
             state_subs[i] = nh.subscribe<std_msgs::Float64MultiArray>(
-                state_topic, 10, boost::bind(&FormationPlanner::stateCallback, this, _1, i));
+                state_topic, 10, boost::bind(&FormationPlanner::stateCallback, this, _1, static_cast<int>(i)));
 
             current_pos[i].setZero();
         }
 
         ros::Time::waitForValid();
         timer = nh.createTimer(ros::Duration(0.01), &FormationPlanner::timerCallback, this);
-        ROS_INFO("Formation Planner Initialized. Waiting for UAVs 1, 2, 3, 4...");
+        ROS_INFO("Formation Planner Initialized. Waiting for %zu UAVs. Master: %s",
+                 uav_names.size(), master_id.c_str());
         ROS_INFO("Master trajectory params: omega=%.3f, center_xy=[0.000, 0.000]", omega);
+    }
+
+    static std::string trim(const std::string& value) {
+        size_t begin = 0;
+        while (begin < value.size() && std::isspace(static_cast<unsigned char>(value[begin]))) {
+            ++begin;
+        }
+
+        size_t end = value.size();
+        while (end > begin && std::isspace(static_cast<unsigned char>(value[end - 1]))) {
+            --end;
+        }
+
+        return value.substr(begin, end - begin);
+    }
+
+    void parseParticipants(const std::string& participants) {
+        std::stringstream ss(participants);
+        std::string item;
+        while (std::getline(ss, item, ',')) {
+            item = trim(item);
+            if (!item.empty()) {
+                uav_names.push_back(item);
+            }
+        }
+
+        if (uav_names.empty()) {
+            ROS_WARN("participants is empty. Falling back to master_id: %s", master_id.c_str());
+            uav_names.push_back(master_id);
+        }
+
+        auto master_it = std::find(uav_names.begin(), uav_names.end(), master_id);
+        if (master_it == uav_names.end()) {
+            ROS_WARN("master_id '%s' is not in participants. Using first participant '%s' as master.",
+                     master_id.c_str(), uav_names.front().c_str());
+            master_id = uav_names.front();
+            master_index = 0;
+        } else {
+            master_index = static_cast<int>(std::distance(uav_names.begin(), master_it));
+        }
+    }
+
+    void initializeStorage() {
+        size_t count = uav_names.size();
+        traj_pub.resize(count);
+        flag_subs.resize(count);
+        state_subs.resize(count);
+        current_pos.assign(count, Eigen::Vector3d::Zero());
+        d_offsets.assign(count, Eigen::Vector3d::Zero());
+        circle_formation_offsets.assign(count, Eigen::Vector3d::Zero());
+        eight_formation_offsets.assign(count, Eigen::Vector3d::Zero());
+        virtual_eight_formation_offsets.assign(count, Eigen::Vector3d::Zero());
+        ready_flags.assign(count, false);
     }
 
     void stateCallback(const std_msgs::Float64MultiArray::ConstPtr& msg, int index) {
@@ -145,7 +212,7 @@ public:
 
     void computeEightMaster(double t, Eigen::Vector3d& pL, Eigen::Vector3d& vL,
                             Eigen::Vector3d& aL, Eigen::Vector3d& jL) {
-        computeEightTrajectory(d_offsets[0], t, pL, vL, aL, jL);
+        computeEightTrajectory(d_offsets[master_index], t, pL, vL, aL, jL);
     }
 
     void computeVirtualEightMaster(double t, Eigen::Vector3d& pL, Eigen::Vector3d& vL,
@@ -184,42 +251,42 @@ public:
     void flagCallback(const std_msgs::Bool::ConstPtr& msg, int index) {
             if (msg->data && !ready_flags[index]) {
                 ready_flags[index] = true;
-                ROS_INFO("UAV %d is READY at pos: [%.2f, %.2f, %.2f]", 
-                         uav_ids[index], current_pos[index].x(), current_pos[index].y(), current_pos[index].z());
+                ROS_INFO("%s is READY at pos: [%.2f, %.2f, %.2f]", 
+                         uav_names[index].c_str(), current_pos[index].x(), current_pos[index].y(), current_pos[index].z());
     
                 if (!all_ready) {
                     bool check = true;
-                    for (int j = 0; j < 4; ++j) {
+                    for (size_t j = 0; j < uav_names.size(); ++j) {
                         if (!ready_flags[j]) { check = false; break; }
                     }
     
                     if (check) {
-                        for (int j = 0; j < 4; ++j) {
+                        for (size_t j = 0; j < uav_names.size(); ++j) {
                             d_offsets[j] = current_pos[j];
                         }
-                        Eigen::Vector3d master_radius = d_offsets[0] - circle_center;
+                        Eigen::Vector3d master_radius = d_offsets[master_index] - circle_center;
                         start_angle = atan2(master_radius.y(), master_radius.x());
                         radius = master_radius.head<2>().norm();
-                        circle_center.z() = d_offsets[0].z();
+                        circle_center.z() = d_offsets[master_index].z();
                         virtual_leader_0.setZero();
-                        for (int j = 0; j < 4; ++j) {
+                        for (size_t j = 0; j < uav_names.size(); ++j) {
                             virtual_leader_0 += d_offsets[j];
                         }
-                        virtual_leader_0 /= 4.0;
+                        virtual_leader_0 /= static_cast<double>(uav_names.size());
 
                         Eigen::Matrix3d circle_R0 = makeFrame(Eigen::Vector3d(radius * omega * sin(start_angle),
                                                                                -radius * omega * cos(start_angle),
                                                                                0.0));
                         Eigen::Matrix3d eight_R0 = makeFrame(Eigen::Vector3d(omega, omega, 0.0));
-                        for (int j = 0; j < 4; ++j) {
-                            circle_formation_offsets[j] = circle_R0.transpose() * (d_offsets[j] - d_offsets[0]);
-                            eight_formation_offsets[j] = eight_R0.transpose() * (d_offsets[j] - d_offsets[0]);
+                        for (size_t j = 0; j < uav_names.size(); ++j) {
+                            circle_formation_offsets[j] = circle_R0.transpose() * (d_offsets[j] - d_offsets[master_index]);
+                            eight_formation_offsets[j] = eight_R0.transpose() * (d_offsets[j] - d_offsets[master_index]);
                             virtual_eight_formation_offsets[j] = eight_R0.transpose() * (d_offsets[j] - virtual_leader_0);
                         }
                         all_ready = true;
                         ROS_INFO("ALL UAVS READY! Offsets recorded. Starting trajectory...");
                         ROS_INFO("Master starts from current position [%.3f, %.3f, %.3f], circle center=[%.3f, %.3f, %.3f], actual radius=%.3f, start_angle=%.3f",
-                                 d_offsets[0].x(), d_offsets[0].y(), d_offsets[0].z(),
+                                 d_offsets[master_index].x(), d_offsets[master_index].y(), d_offsets[master_index].z(),
                                  circle_center.x(), circle_center.y(), circle_center.z(), radius, start_angle);
                         ROS_INFO("Virtual leader initial position [%.3f, %.3f, %.3f]",
                                  virtual_leader_0.x(), virtual_leader_0.y(), virtual_leader_0.z());
@@ -249,7 +316,7 @@ public:
         Eigen::Vector3d r1 = R_TI.col(0);
         Eigen::Vector3d dr1 = dR_TI.col(0);
         
-        for (int i = 0; i < 4; ++i) {
+        for (size_t i = 0; i < uav_names.size(); ++i) {
             sz_indoor_controller::TrajPoint msg_out;
 
             Eigen::Vector3d formation_offset = circle_formation_offsets[i];
