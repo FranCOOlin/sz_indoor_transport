@@ -146,6 +146,7 @@ class MultiTrajRouterNode:
             rospy.loginfo(f"[{uav_id}] 收到轨迹点，开始跟随")
             self.transition_to_state(state, state.STATE_TRAJ_FOLLOWING)
             state.trajectory_started = True
+            state.last_point_time = rospy.Time.now()
         
         if state.current_state == state.STATE_TRAJ_FOLLOWING:
             state.trajectory_pub.publish(msg)
