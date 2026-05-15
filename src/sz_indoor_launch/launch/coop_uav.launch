@@ -12,7 +12,6 @@
 
     <!-- 本次实验流程 ID。必须与 GCS 一致。 -->
     <arg name="run_id" default="coop_lift_test_001"/>
-
     <!-- 是否启动 sz_indoor_controller 的系统逻辑。需要只跑 FSM 时可设为 false。 -->
     <arg name="launch_controller" default="true"/>
 
@@ -109,7 +108,7 @@
             <param name="offboard_retry_period" value="$(arg offboard_retry_period)"/>
             <param name="arm_retry_period" value="$(arg arm_retry_period)"/>
             <!-- 添加 ki_z 参数 -->
-            <param name="$(arg uav_id)/controller/quadrotor/ki_z" value="0.5" />
+            <param name="controller/quadrotor/ki_z" value="0.5" />
         </node>
 
         <!-- 原 sys_20260323.launch 逻辑 3：启动 observer 节点。 -->
