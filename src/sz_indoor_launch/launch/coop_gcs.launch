@@ -57,6 +57,7 @@
     <arg name="trajectory_omega" default="0.1"/>
     <arg name="traj_router_uav_id" default="/$(arg master_id)"/>
     <arg name="traj_router_landing_duration" default="5.0"/>
+    <arg name="eight_x_scale" default="1.0" />
 
     <node if="$(arg launch_traj_router)"
           pkg="sz_indoor_traj_router"
@@ -79,6 +80,8 @@
         <param name="omega" value="$(arg trajectory_omega)"/>
         <param name="participants" value="$(arg participants)"/>
         <param name="master_id" value="$(arg master_id)" />
+        <param name="eight_x_scale" value="$(arg eight_x_scale)" />
+        <param name="target_height" value="$(arg takeoff_height)" />
     </node>
 
     <include file="$(find sz_indoor_fsm)/launch/coop_fsm.launch">

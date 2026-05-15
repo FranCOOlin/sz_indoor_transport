@@ -40,6 +40,8 @@ private:
    
     double radius = 0.0;
     double omega = 0.3;
+    double eight_x_scale = 1.0;
+    double target_height = 1.0;
     double start_angle = 0.0;
     Eigen::Vector3d circle_center;
     Eigen::Vector3d virtual_leader_0;
@@ -52,6 +54,8 @@ public:
         pnh.param<std::string>("master_id", master_id, "uav0");
         pnh.param<std::string>("participants", participants, "uav0,uav1,uav2,uav3");
         pnh.param("omega", omega, omega);
+        pnh.param("eight_x_scale", eight_x_scale, eight_x_scale);
+        pnh.param("target_height", target_height, target_height);
         circle_center << 0.0, 0.0, 0.0;
         trajectory_request_sub = nh.subscribe<std_msgs::String>(
             "/trajectory_request", 1, &FormationPlanner::trajectoryRequestCallback, this);
@@ -78,7 +82,8 @@ public:
         timer = nh.createTimer(ros::Duration(0.01), &FormationPlanner::timerCallback, this);
         ROS_INFO("Formation Planner Initialized. Waiting for %zu UAVs. Master: %s",
                  uav_names.size(), master_id.c_str());
-        ROS_INFO("Master trajectory params: omega=%.3f, center_xy=[0.000, 0.000]", omega);
+        ROS_INFO("Master trajectory params: omega=%.3f, eight_x_scale=%.3f, target_height=%.3f, center_xy=[0.000, 0.000]",
+                 omega, eight_x_scale, target_height);
     }
 
     static std::string trim(const std::string& value) {
@@ -196,16 +201,16 @@ public:
         double ct = cos(theta);
         double c2t = cos(2.0 * theta);
 
-        pL << start.x() + st,
+        pL << start.x() + eight_x_scale * st,
               start.y() + ct * st,
               start.z();
-        vL << omega * ct,
+        vL << eight_x_scale * omega * ct,
               omega * c2t,
               0.0;
-        aL << -omega * omega * st,
+        aL << -eight_x_scale * omega * omega * st,
               -2.0 * omega * omega * sin(2.0 * theta),
               0.0;
-        jL << -pow(omega, 3) * ct,
+        jL << -eight_x_scale * pow(omega, 3) * ct,
               -4.0 * pow(omega, 3) * c2t,
               0.0;
     }
@@ -263,11 +268,12 @@ public:
                     if (check) {
                         for (size_t j = 0; j < uav_names.size(); ++j) {
                             d_offsets[j] = current_pos[j];
+                            d_offsets[j].z() = target_height;
                         }
                         Eigen::Vector3d master_radius = d_offsets[master_index] - circle_center;
                         start_angle = atan2(master_radius.y(), master_radius.x());
                         radius = master_radius.head<2>().norm();
-                        circle_center.z() = d_offsets[master_index].z();
+                        circle_center.z() = target_height;
                         virtual_leader_0.setZero();
                         for (size_t j = 0; j < uav_names.size(); ++j) {
                             virtual_leader_0 += d_offsets[j];
@@ -277,7 +283,7 @@ public:
                         Eigen::Matrix3d circle_R0 = makeFrame(Eigen::Vector3d(radius * omega * sin(start_angle),
                                                                                -radius * omega * cos(start_angle),
                                                                                0.0));
-                        Eigen::Matrix3d eight_R0 = makeFrame(Eigen::Vector3d(omega, omega, 0.0));
+                        Eigen::Matrix3d eight_R0 = makeFrame(Eigen::Vector3d(eight_x_scale * omega, omega, 0.0));
                         for (size_t j = 0; j < uav_names.size(); ++j) {
                             circle_formation_offsets[j] = circle_R0.transpose() * (d_offsets[j] - d_offsets[master_index]);
                             eight_formation_offsets[j] = eight_R0.transpose() * (d_offsets[j] - d_offsets[master_index]);
