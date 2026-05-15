@@ -386,11 +386,7 @@ class MultiTrajRouterNode:
                 state.trajectory_pub.publish(point)
             
             # 状态更新
-            if state.current_state == state.STATE_TAKEOFF:
-                if elapsed >= state.takeoff_duration:
-                    self.transition_to_state(state, state.STATE_HOVER)
-            
-            elif state.current_state == state.STATE_LANDING:
+            if state.current_state == state.STATE_LANDING:
                 if elapsed >= state.landing_duration + 1.0:
                     self.transition_to_state(state, state.STATE_IDLE)
             
