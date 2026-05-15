@@ -148,7 +148,6 @@ public:
   double zp_int_z;      // Z轴位置误差积分
   double &zp_int_input;
   double int_limit;     // 积分限幅值
-  double ki_z;          // Z轴积分增益
   ros::Time last_time;  // 【新增】上次调用时间
   bool first_call;      // 【新增】是否是第一次调用
 
@@ -164,7 +163,6 @@ public:
         zp_int_z(0.0),
         zp_int_input(_zp_int_z),       
         int_limit(5.0),      // 积分限幅，防止积分饱和
-        ki_z(0.5),           // Z轴积分增益，可根据需要调整
         first_call(true) {}   // 第一次调用标志
 
   virtual ~QuadrotorControllerGanYu() {}
@@ -209,6 +207,7 @@ public:
     // ========= 参数读取 =========
     Eigen::Vector3d kp = params.quadrotor_kp;   // [kpx, kpy, kpz]
     Eigen::Vector3d kv = params.quadrotor_kv;   // [kvx, kvy, kvz]
+    double ki_z = params.quadrotor_ki_z;           // 从参数服务器读取
 
     // ========= 【新增】计算时间步长 =========
     ros::Time current_time = ros::Time::now();
