@@ -8,7 +8,8 @@
     <arg name="master_id" default="uav170"/>
 
     <!-- 参与本轮任务的 UAV 列表，逗号分隔。GCS 会等待这些 UAV 的 prepared/achieve。 -->
-    <arg name="participants" default="uav170,uav171,uav173,uav174"/>
+    <arg name="participants" default="uav170"/>
+    <!-- <arg name="participants" default="uav170,uav171,uav173,uav174"/> -->
 
     <!-- 本次实验流程 ID。所有 GCS/UAV FSM 必须一致。 -->
     <arg name="run_id" default="coop_lift_test_001"/>
