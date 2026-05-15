@@ -52,15 +52,6 @@ public:
         pnh.param<std::string>("master_id", master_id, "uav0");
         pnh.param<std::string>("participants", participants, "uav0,uav1,uav2,uav3");
         pnh.param("omega", omega, omega);
-        std::string participants;
-        pnh.param<std::string>("participants", participants, "uav170,uav171,uav173,uav174");
-        uav_ids = parseParticipants(participants);
-        if (uav_ids.empty()) {
-            ROS_ERROR("Formation Planner needs non-empty ~participants");
-            ros::shutdown();
-            return;
-        }
-
         circle_center << 0.0, 0.0, 0.0;
         trajectory_request_sub = nh.subscribe<std_msgs::String>(
             "/trajectory_request", 1, &FormationPlanner::trajectoryRequestCallback, this);
@@ -257,10 +248,7 @@ public:
         ROS_INFO("Trajectory started: choice=%d, t reset to 0.", active_traj_choice);
     }
     
-    void flagCallback(const std_msgs::Bool::ConstPtr& msg, std::size_t index) {
-            if (index >= ready_flags.size()) {
-                return;
-            }
+    void flagCallback(const std_msgs::Bool::ConstPtr& msg, int index) {
             if (msg->data && !ready_flags[index]) {
                 ready_flags[index] = true;
                 ROS_INFO("%s is READY at pos: [%.2f, %.2f, %.2f]", 
