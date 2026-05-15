@@ -146,6 +146,7 @@ public:
   common::QuadrotorControlInput &control_input;
 
   double zp_int_z;      // Z轴位置误差积分
+  double &zp_int_input;
   double int_limit;     // 积分限幅值
   double ki_z;          // Z轴积分增益
   ros::Time last_time;  // 【新增】上次调用时间
@@ -154,12 +155,14 @@ public:
   QuadrotorControllerGanYu(common::SystemParams &_params,
                            common::QuadrotorState &_state,
                            common::MyTrajectory &_trajectory,
-                           common::QuadrotorControlInput &_control_input)
+                           common::QuadrotorControlInput &_control_input,
+                           double &_zp_int_z)
       : params(_params),
         state(_state),
         trajectory(_trajectory),
         control_input(_control_input),
-        zp_int_z(0.0),       // 初始化积分为0
+        zp_int_z(0.0),
+        zp_int_input(_zp_int_z),       
         int_limit(5.0),      // 积分限幅，防止积分饱和
         ki_z(0.1),           // Z轴积分增益，可根据需要调整
         first_call(true) {}   // 第一次调用标志
@@ -295,6 +298,7 @@ public:
     T = clamp(T, 0.0, params.max_thrust);
     control_input.thrust = T;
     control_input.omega  = omega;
+    zp_int_input = zp_int_z;
 
     // ========= 推力/角速度映射 =========
     if (use_polyval) {
