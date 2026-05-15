@@ -21,7 +21,7 @@
     <!-- 起飞/降落相关参数。takeoff_duration 也会发给 traj_router。 -->
     <arg name="takeoff_height" default="1.0"/>
     <arg name="takeoff_duration" default="15.0"/>
-    <arg name="traj_type" default="1"/>
+    <arg name="traj_type" default="2"/>
     <arg name="takeoff_reached_tolerance" default="0.001"/>
     <arg name="takeoff_timeout_margin" default="2.0"/>
     <arg name="land_reset_delay" default="5.0"/>
@@ -55,7 +55,7 @@
     <arg name="launch_trajectory_node" default="true"/>
     <arg name="traj_router_output" default="screen"/>
     <arg name="trajectory_node_output" default="screen"/>
-    <arg name="trajectory_omega" default="0.1"/>
+    <arg name="trajectory_omega" default="0.3"/>
     <arg name="traj_router_uav_id" default="/$(arg master_id)"/>
     <arg name="traj_router_landing_duration" default="5.0"/>
 
