@@ -167,6 +167,11 @@ public:
 
   virtual ~QuadrotorControllerGanYu() {}
 
+  void resetZIntegral() {
+    zp_int_z = 0.0;
+    zp_int_input = 0.0;
+  }
+
   double clamp(double x, double min_val, double max_val) {
     return x < min_val ? min_val : (x > max_val ? max_val : x);
   }

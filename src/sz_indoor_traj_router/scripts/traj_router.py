@@ -47,6 +47,7 @@ class UAVState:
         self.flag_pub = None
         self.trajectory_pub = None
         self.init_pub = None
+        self.integral_reset_pub = None
 
 class MultiTrajRouterNode:
     """
@@ -113,6 +114,7 @@ class MultiTrajRouterNode:
         )
         state.trajectory_pub = rospy.Publisher(f'{uav_id}/trajectory', TrajPoint, queue_size=10)
         state.init_pub = rospy.Publisher(f'{uav_id}/init_state', Float64MultiArray, queue_size=10, latch=True)
+        state.integral_reset_pub = rospy.Publisher(f'{uav_id}/control/reset_integral', Bool, queue_size=10, latch=True)
         
         traj_topic = f'{uav_id}/planning/traj_point'
         rospy.Subscriber(traj_topic, TrajPoint, 
@@ -200,6 +202,7 @@ class MultiTrajRouterNode:
             state.takeoff_duration = duration
             
             if state.current_state == state.STATE_IDLE:
+                self.reset_controller_integral(state)
                 self.transition_to_state(state, state.STATE_TAKEOFF)
                 success.append(uav_id)
             else:
@@ -208,6 +211,13 @@ class MultiTrajRouterNode:
         if fail:
             return JsonCommandResponse(False, f"失败: {fail}")
         return JsonCommandResponse(True, f"起飞: {success}")
+
+    def reset_controller_integral(self, state):
+        """通知 controller 清零 Z 轴积分项。"""
+        msg = Bool()
+        msg.data = True
+        state.integral_reset_pub.publish(msg)
+        rospy.loginfo("[%s] reset controller z integral", state.uav_id)
     
     def handle_traj_following(self, participants, payload):
         """开始主轨迹跟随。"""
@@ -260,17 +270,15 @@ class MultiTrajRouterNode:
     
     def enable_trajectory_forwarding(self, state):
         """通知 trajectory_node 该 UAV 已准备好，并允许转发后续轨迹点。"""
+        init_state = Float64MultiArray()
+        init_state.data = [state.lock_x, state.lock_y, 0.0]
+        state.init_pub.publish(init_state)
+
         flag = Bool()
         flag.data = True
         state.flag_pub.publish(flag)
         state.trajectory_active = True
         state.trajectory_started = False
-        
-        init_state = Float64MultiArray()
-        init_state.data[0] = state.lock_x
-        init_state.data[1] = state.lock_y
-        init_state.data[2] = 0.0
-        state.init_pub.publish()
 
     def request_trajectory_from_downstream(self, trajectory_name):
         """请求 trajectory_node 生成指定轨迹。"""
@@ -355,7 +363,7 @@ class MultiTrajRouterNode:
                 hover_point = TrajPoint()
                 hover_point.pd.x = state.current_x
                 hover_point.pd.y = state.current_y
-                hover_point.pd.z = state.current_z
+                hover_point.pd.z = 1
                 hover_point.dpd.x = hover_point.dpd.y = hover_point.dpd.z = 0.0
                 hover_point.d2pd.x = hover_point.d2pd.y = hover_point.d2pd.z = 0.0
                 hover_point.d3pd.x = hover_point.d3pd.y = hover_point.d3pd.z = 0.0
@@ -398,7 +406,7 @@ class MultiTrajRouterNode:
                     self.transition_to_state(state, state.STATE_IDLE)
             
             elif state.current_state == state.STATE_TRAJ_FOLLOWING:
-                if state.trajectory_started and since_last_point > 0.1:
+                if state.trajectory_started and since_last_point > 0.3:
                     rospy.logwarn(f"[{uav_id}] 轨迹中断，降落")
                     state.trajectory_active = False
                     self.transition_to_state(state, state.STATE_LANDING)

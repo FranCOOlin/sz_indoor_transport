@@ -3,6 +3,7 @@
 #include <std_msgs/Float64MultiArray.h>
 #include <std_msgs/String.h>
 #include <std_msgs/Int32.h>
+#include <std_msgs/Bool.h>
 
 // MAVROS 消息
 #include <mavros_msgs/SetMode.h>
@@ -222,6 +223,17 @@ void trajCallback(const sz_indoor_controller::TrajPoint::ConstPtr &msg, common::
   // ROS_INFO("Trajectory updated: received %lu waypoints", trajectory.waypoints.size());
 }
 
+void resetIntegralCallback(const std_msgs::Bool::ConstPtr &msg,
+                           controller::QuadrotorControllerGanYu &quadrotor_ctrl)
+{
+  if (!msg->data)
+  {
+    return;
+  }
+  quadrotor_ctrl.resetZIntegral();
+  ROS_INFO("Quadrotor z integral reset.");
+}
+
 void trajSwitchCallback(const std_msgs::String::ConstPtr &msg, common::Trajectory &trajectory)
 {
   // trajectory.traj_type = msg->data;
@@ -337,7 +349,7 @@ int main(int argc, char **argv)
   common::QSLSState qsls_state;
   common::MyTrajectory trajectory;
   common::QuadrotorControlInput control_input;
-  double integral_z;
+  double integral_z = 0.0;
 
   // 加载参数文件
   if (!params.loadFromRos(nh))
@@ -436,6 +448,7 @@ int main(int argc, char **argv)
 
     // 订阅轨迹话题
     ros::Subscriber traj_sub = nh.subscribe<sz_indoor_controller::TrajPoint>(uav_id + "/trajectory", 10, std::bind(trajCallback, std::placeholders::_1, std::ref(quadrotor_ctrl.trajectory)));
+    ros::Subscriber reset_integral_sub = nh.subscribe<std_msgs::Bool>(uav_id + "/control/reset_integral", 10, std::bind(resetIntegralCallback, std::placeholders::_1, std::ref(quadrotor_ctrl)));
 
     // 订阅其他话题
     ros::Subscriber traj_switch_sub = nh.subscribe<std_msgs::String>(uav_id + "/trajswitch", 10, std::bind(trajSwitchCallback, std::placeholders::_1, std::ref(quadrotor_ctrl.trajectory)));
@@ -512,6 +525,7 @@ int main(int argc, char **argv)
 
     // 订阅轨迹话题
     ros::Subscriber traj_sub = nh.subscribe<sz_indoor_controller::TrajPoint>("trajectory", 10,std::bind(trajCallback, std::placeholders::_1, std::ref(quadrotor_ctrl.trajectory)));
+    ros::Subscriber reset_integral_sub = nh.subscribe<std_msgs::Bool>(uav_id + "/control/reset_integral", 10, std::bind(resetIntegralCallback, std::placeholders::_1, std::ref(quadrotor_ctrl)));
 
     // 订阅其它话题
     ros::Subscriber controller_sw_sub = nh.subscribe<std_msgs::Int32>(uav_id + "/controller_sw", 10,std::bind(controllerSWCallback, std::placeholders::_1, std::ref(scheduler)));
