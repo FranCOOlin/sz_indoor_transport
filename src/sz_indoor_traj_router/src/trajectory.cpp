@@ -71,7 +71,7 @@ public:
             flag_subs[i] = nh.subscribe<std_msgs::Bool>(
                 flag_topic, 1, boost::bind(&FormationPlanner::flagCallback, this, _1, static_cast<int>(i)));
 
-            std::string state_topic = uav_ns + "/quadrotor_state";
+            std::string state_topic = uav_ns + "/init_state";
             state_subs[i] = nh.subscribe<std_msgs::Float64MultiArray>(
                 state_topic, 10, boost::bind(&FormationPlanner::stateCallback, this, _1, static_cast<int>(i)));
 
@@ -141,8 +141,9 @@ public:
 
     void stateCallback(const std_msgs::Float64MultiArray::ConstPtr& msg, int index) {
         if (msg->data.size() >= 3) {
-            current_pos[index] << msg->data[0], msg->data[1], msg->data[2];
+            current_pos[index] << -msg->data[0], msg->data[1], -msg->data[2];
         }
+        
     }
 
     void trajectoryRequestCallback(const std_msgs::String::ConstPtr& msg) {
@@ -336,21 +337,21 @@ public:
             Eigen::Vector3d ddpFi = aL + ddR_TI * formation_offset;
             Eigen::Vector3d dddpFi = jL + dddR_TI * formation_offset;
 
-            msg_out.pd.x = pFi.x();
+            msg_out.pd.x = -pFi.x();
             msg_out.pd.y = pFi.y(); 
-            msg_out.pd.z = pFi.z();
+            msg_out.pd.z = -pFi.z();
             
-            msg_out.dpd.x = dpFi.x(); 
+            msg_out.dpd.x = -dpFi.x(); 
             msg_out.dpd.y = dpFi.y(); 
-            msg_out.dpd.z = dpFi.z();
+            msg_out.dpd.z = -dpFi.z();
             
-            msg_out.d2pd.x = ddpFi.x(); 
+            msg_out.d2pd.x = -ddpFi.x(); 
             msg_out.d2pd.y = ddpFi.y(); 
-            msg_out.d2pd.z = ddpFi.z();
+            msg_out.d2pd.z = -ddpFi.z();
             
-            msg_out.d3pd.x = dddpFi.x(); 
+            msg_out.d3pd.x = -dddpFi.x(); 
             msg_out.d3pd.y = dddpFi.y(); 
-            msg_out.d3pd.z = dddpFi.z();
+            msg_out.d3pd.z = -dddpFi.z();
 
             msg_out.yawd = atan2(r1.y(), r1.x());
             msg_out.yawd_dot = r1.x() * dr1.y() - r1.y() * dr1.x();
