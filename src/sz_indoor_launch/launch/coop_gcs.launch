@@ -78,6 +78,7 @@
           output="$(arg trajectory_node_output)">
         <param name="omega" value="$(arg trajectory_omega)"/>
         <param name="participants" value="$(arg participants)"/>
+        <param name="master_id" value="$(arg master_id)" />
     </node>
 
     <include file="$(find sz_indoor_fsm)/launch/coop_fsm.launch">
