@@ -46,7 +46,7 @@ class UAVState:
         # 发布器
         self.flag_pub = None
         self.trajectory_pub = None
-
+        self.init_pub = None
 
 class MultiTrajRouterNode:
     """
@@ -112,6 +112,7 @@ class MultiTrajRouterNode:
             f'{uav_id}/traj_generation_flag', Bool, queue_size=10, latch=True
         )
         state.trajectory_pub = rospy.Publisher(f'{uav_id}/trajectory', TrajPoint, queue_size=10)
+        state.init_pub = rospy.Publisher(f'{uav_id}/init_state', Float64MultiArray, queue_size=10, latch=True)
         
         traj_topic = f'{uav_id}/planning/traj_point'
         rospy.Subscriber(traj_topic, TrajPoint, 
@@ -264,6 +265,12 @@ class MultiTrajRouterNode:
         state.flag_pub.publish(flag)
         state.trajectory_active = True
         state.trajectory_started = False
+        
+        init_state = Float64MultiArray()
+        init_state.data[0] = state.lock_x
+        init_state.data[1] = state.lock_y
+        init_state.data[2] = 0.0
+        state.init_pub.publish()
 
     def request_trajectory_from_downstream(self, trajectory_name):
         """请求 trajectory_node 生成指定轨迹。"""
