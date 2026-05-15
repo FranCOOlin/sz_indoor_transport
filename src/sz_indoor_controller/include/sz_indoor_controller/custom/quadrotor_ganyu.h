@@ -164,7 +164,7 @@ public:
         zp_int_z(0.0),
         zp_int_input(_zp_int_z),       
         int_limit(5.0),      // 积分限幅，防止积分饱和
-        ki_z(0.1),           // Z轴积分增益，可根据需要调整
+        ki_z(0.5),           // Z轴积分增益，可根据需要调整
         first_call(true) {}   // 第一次调用标志
 
   virtual ~QuadrotorControllerGanYu() {}
