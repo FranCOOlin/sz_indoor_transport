@@ -406,7 +406,7 @@ class MultiTrajRouterNode:
                     self.transition_to_state(state, state.STATE_IDLE)
             
             elif state.current_state == state.STATE_TRAJ_FOLLOWING:
-                if state.trajectory_started and since_last_point > 0.3:
+                if state.trajectory_started and since_last_point > 1:
                     rospy.logwarn(f"[{uav_id}] 轨迹中断，降落")
                     state.trajectory_active = False
                     self.transition_to_state(state, state.STATE_LANDING)

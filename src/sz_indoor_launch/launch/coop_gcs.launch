@@ -9,7 +9,7 @@
 
     <!-- 参与本轮任务的 UAV 列表，逗号分隔。GCS 会等待这些 UAV 的 prepared/achieve。 -->
     <!-- <arg name="participants" default="uav170"/> -->
-    <arg name="participants" default="uav170,uav171,uav173,uav174"/>
+    <arg name="participants" default="uav170,uav171,uav173"/>
 
     <!-- 本次实验流程 ID。所有 GCS/UAV FSM 必须一致。 -->
     <arg name="run_id" default="coop_lift_test_001"/>
@@ -21,7 +21,7 @@
     <!-- 起飞/降落相关参数。takeoff_duration 也会发给 traj_router。 -->
     <arg name="takeoff_height" default="1.0"/>
     <arg name="takeoff_duration" default="15.0"/>
-    <arg name="traj_type" default="3"/>
+    <arg name="traj_type" default="1"/>
     <arg name="takeoff_reached_tolerance" default="0.001"/>
     <arg name="takeoff_timeout_margin" default="2.0"/>
     <arg name="land_reset_delay" default="5.0"/>
