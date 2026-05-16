@@ -230,8 +230,8 @@ void resetIntegralCallback(const std_msgs::Bool::ConstPtr &msg,
   {
     return;
   }
-  quadrotor_ctrl.resetZIntegral();
-  ROS_INFO("Quadrotor z integral reset.");
+  quadrotor_ctrl.resetIntegral();
+  ROS_INFO("Quadrotor xyz integral reset.");
 }
 
 void trajSwitchCallback(const std_msgs::String::ConstPtr &msg, common::Trajectory &trajectory)
@@ -379,6 +379,13 @@ int main(int argc, char **argv)
          params.quadrotor_kv(0),
          params.quadrotor_kv(1),
          params.quadrotor_kv(2));
+
+  ROS_INFO("%s controller/quadrotor/ki = [%f, %f, %f], int_limit = %f",
+         uav_id.c_str(),
+         params.quadrotor_ki(0),
+         params.quadrotor_ki(1),
+         params.quadrotor_ki(2),
+         params.quadrotor_int_limit);
 
          
          

@@ -41,6 +41,10 @@
     <arg name="keep_offboard" default="true"/>
     <arg name="offboard_retry_period" default="1.0"/>
     <arg name="arm_retry_period" default="1.0"/>
+    <arg name="quadrotor_ki_x" default="0.5"/>
+    <arg name="quadrotor_ki_y" default="0.5"/>
+    <arg name="quadrotor_ki_z" default="0.5"/>
+    <arg name="quadrotor_int_limit" default="5.0"/>
 
     <!-- FSM 起飞目标高度。 -->
     <arg name="takeoff_height" default="1.0"/>
@@ -107,8 +111,11 @@
             <param name="keep_offboard" value="$(arg keep_offboard)"/>
             <param name="offboard_retry_period" value="$(arg offboard_retry_period)"/>
             <param name="arm_retry_period" value="$(arg arm_retry_period)"/>
-            <!-- 添加 ki_z 参数 -->
-            <param name="controller/quadrotor/ki_z" value="0.5" />
+            <!-- 三轴位置误差积分参数。 -->
+            <param name="controller/quadrotor/ki_x" value="$(arg quadrotor_ki_x)"/>
+            <param name="controller/quadrotor/ki_y" value="$(arg quadrotor_ki_y)"/>
+            <param name="controller/quadrotor/ki_z" value="$(arg quadrotor_ki_z)"/>
+            <param name="controller/quadrotor/int_limit" value="$(arg quadrotor_int_limit)"/>
         </node>
 
         <!-- 原 sys_20260323.launch 逻辑 3：启动 observer 节点。 -->

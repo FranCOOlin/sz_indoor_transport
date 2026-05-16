@@ -133,6 +133,7 @@
 #include "sz_indoor_controller/custom/quadrotor_control_input.h"
 
 #include <eigen3/Eigen/Dense>
+#include <algorithm>
 #include <cmath>
 #include <ros/ros.h>
 
@@ -145,9 +146,9 @@ public:
   common::MyTrajectory &trajectory;
   common::QuadrotorControlInput &control_input;
 
-  double zp_int_z;      // Z轴位置误差积分
-  double &zp_int_input;
-  double int_limit;     // 积分限幅值
+  Eigen::Vector3d zp_int;  // 位置误差积分项，已乘三轴 ki
+  double &zp_int_input;    // 保持原有 z 轴积分观测接口
+  double int_limit;        // 积分限幅值
   ros::Time last_time;  // 【新增】上次调用时间
   bool first_call;      // 【新增】是否是第一次调用
 
@@ -160,16 +161,21 @@ public:
         state(_state),
         trajectory(_trajectory),
         control_input(_control_input),
-        zp_int_z(0.0),
+        zp_int(Eigen::Vector3d::Zero()),
         zp_int_input(_zp_int_z),       
         int_limit(5.0),      // 积分限幅，防止积分饱和
         first_call(true) {}   // 第一次调用标志
 
   virtual ~QuadrotorControllerGanYu() {}
 
-  void resetZIntegral() {
-    zp_int_z = 0.0;
+  void resetIntegral() {
+    zp_int.setZero();
     zp_int_input = 0.0;
+    first_call = true;
+  }
+
+  void resetZIntegral() {
+    resetIntegral();
   }
 
   double clamp(double x, double min_val, double max_val) {
@@ -212,7 +218,8 @@ public:
     // ========= 参数读取 =========
     Eigen::Vector3d kp = params.quadrotor_kp;   // [kpx, kpy, kpz]
     Eigen::Vector3d kv = params.quadrotor_kv;   // [kvx, kvy, kvz]
-    double ki_z = params.quadrotor_ki_z;           // 从参数服务器读取
+    Eigen::Vector3d ki = params.quadrotor_ki;   // [kix, kiy, kiz]
+    int_limit = std::max(0.0, params.quadrotor_int_limit);
 
     // ========= 【新增】计算时间步长 =========
     ros::Time current_time = ros::Time::now();
@@ -246,19 +253,18 @@ public:
     Eigen::Vector3d zp = state.p  - trajectory.pd;    // 位置误差
     Eigen::Vector3d zv = state.vi - trajectory.dpd;   // 速度误差
 
-    // ========= 【新增】Z轴积分项更新 =========
-    // 只对Z轴误差进行积分
-    double zp_z = zp(2);  // Z轴位置误差
-    zp_int_z += ki_z * zp_z * dt;  // 积分累加
+    // ========= XYZ轴积分项更新 =========
+    zp_int += ki.cwiseProduct(zp) * dt;
 
     // 积分限幅，防止积分饱和
-    if (zp_int_z > int_limit) zp_int_z = int_limit;
-    if (zp_int_z < -int_limit) zp_int_z = -int_limit;
+    for (int i = 0; i < 3; ++i) {
+      zp_int(i) = clamp(zp_int(i), -int_limit, int_limit);
+    }
 
     // 对角增益：u = -Kp*zp - Kv*zv
     // 用 cwiseProduct 等价于 diag(kx,ky,kz)*z
     Eigen::Vector3d u = -kp.cwiseProduct(zp) - kv.cwiseProduct(zv);
-    u(2) -= zp_int_z;  // 【新增】Z轴添加积分项
+    u -= zp_int;  // 三轴添加积分项
 
     // ========= 期望力 =========
     Eigen::Vector3d Fd = mq * (u - g * e3 + trajectory.d2pd);
@@ -302,7 +308,7 @@ public:
     T = clamp(T, 0.0, params.max_thrust);
     control_input.thrust = T;
     control_input.omega  = omega;
-    zp_int_input = zp_int_z;
+    zp_int_input = zp_int(2);
 
     // ========= 推力/角速度映射 =========
     if (use_polyval) {

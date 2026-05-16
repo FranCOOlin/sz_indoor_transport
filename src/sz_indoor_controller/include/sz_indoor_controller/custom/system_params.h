@@ -387,7 +387,9 @@ namespace common
         double quadrotor_mq, quadrotor_kr, quadrotor_hr;
         Eigen::Vector3d quadrotor_kp;   // [kpx, kpy, kpz]
         Eigen::Vector3d quadrotor_kv;   // [kvx, kvy, kvz]
-        double quadrotor_ki_z;      // Z轴积分增益
+        Eigen::Vector3d quadrotor_ki = Eigen::Vector3d(0.5, 0.5, 0.5);  // [kix, kiy, kiz]
+        double quadrotor_ki_z = 0.5;                                     // 兼容旧的 Z 轴积分增益接口
+        double quadrotor_int_limit = 5.0;                                // 三轴积分限幅
 
         // For QSLS saturated backstepping controller
         double QSLS_bar_mQ;
@@ -454,6 +456,34 @@ namespace common
             return true;
         }
 
+        bool loadVector3FromRosAny(ros::NodeHandle &nh,
+                                   const std::vector<std::string> &names,
+                                   Eigen::Vector3d &out)
+        {
+            for (const auto &name : names)
+            {
+                if (loadVector3FromRos(nh, name, out))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        bool loadDoubleFromRosAny(ros::NodeHandle &nh,
+                                  const std::vector<std::string> &names,
+                                  double &out)
+        {
+            for (const auto &name : names)
+            {
+                if (nh.getParam(name, out))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         Eigen::Vector3d vector3FromStd(const std::vector<double> &v,
                                        const std::string &name) const
         {
@@ -484,6 +514,11 @@ namespace common
                 return false;
             }
 
+            const std::string private_quadrotor_param = uav_id + "_controller/controller/quadrotor/";
+            const std::string public_quadrotor_param = uav_id + "/controller/quadrotor/";
+            quadrotor_ki = Eigen::Vector3d(0.5, 0.5, 0.5);
+            quadrotor_int_limit = 5.0;
+
             if (!loadVector3FromRos(nh, uav_id + "/controller/quadrotor/kp", quadrotor_kp))
             {
                 ROS_WARN("Failed to get parameter: %s",
@@ -496,10 +531,60 @@ namespace common
                          (uav_id + "/controller/quadrotor/kv").c_str());
             }
             
-            // 添加积分参数读取
-            if (!nh.getParam(uav_id + "_controller/controller/quadrotor/ki_z", quadrotor_ki_z))
+            // 积分参数接口：优先读取三轴 ki，也兼容 ki_x/ki_y/ki_z 标量形式
+            bool loaded_ki = loadVector3FromRosAny(
+                nh,
+                std::vector<std::string>{
+                    private_quadrotor_param + "ki",
+                    public_quadrotor_param + "ki"},
+                quadrotor_ki);
+
+            double ki_axis = 0.0;
+            if (loadDoubleFromRosAny(nh,
+                                     std::vector<std::string>{
+                                         private_quadrotor_param + "ki_x",
+                                         public_quadrotor_param + "ki_x"},
+                                     ki_axis))
             {
-                ROS_WARN("Failed to get parameter: %s/controller/quadrotor/ki_z, using default 0.5", uav_id.c_str());
+                quadrotor_ki(0) = ki_axis;
+                loaded_ki = true;
+            }
+
+            if (loadDoubleFromRosAny(nh,
+                                     std::vector<std::string>{
+                                         private_quadrotor_param + "ki_y",
+                                         public_quadrotor_param + "ki_y"},
+                                     ki_axis))
+            {
+                quadrotor_ki(1) = ki_axis;
+                loaded_ki = true;
+            }
+
+            if (loadDoubleFromRosAny(nh,
+                                     std::vector<std::string>{
+                                         private_quadrotor_param + "ki_z",
+                                         public_quadrotor_param + "ki_z"},
+                                     ki_axis))
+            {
+                quadrotor_ki(2) = ki_axis;
+                loaded_ki = true;
+            }
+
+            quadrotor_ki_z = quadrotor_ki(2);
+
+            if (!loaded_ki)
+            {
+                ROS_WARN("Failed to get quadrotor integral gain, using default ki = [%f, %f, %f]",
+                         quadrotor_ki(0), quadrotor_ki(1), quadrotor_ki(2));
+            }
+
+            if (!loadDoubleFromRosAny(nh,
+                                      std::vector<std::string>{
+                                          private_quadrotor_param + "int_limit",
+                                          public_quadrotor_param + "int_limit"},
+                                      quadrotor_int_limit))
+            {
+                ROS_WARN("Failed to get quadrotor integral limit, using default %f", quadrotor_int_limit);
             }
 
             if (!nh.getParam(uav_id + "/controller/quadrotor/kr", quadrotor_kr))
@@ -648,11 +733,44 @@ namespace common
 
             try
             {
-                quadrotor_mq = paramDict["controller"]["quadrotor"]["mq"].get<double>();
-                quadrotor_kp = loadVector3FromJson(paramDict["controller"]["quadrotor"]["kp"], "controller.quadrotor.kp");
-                quadrotor_kv = loadVector3FromJson(paramDict["controller"]["quadrotor"]["kv"], "controller.quadrotor.kv");
-                quadrotor_kr = paramDict["controller"]["quadrotor"]["kr"].get<double>();
-                quadrotor_hr = paramDict["controller"]["quadrotor"]["hr"].get<double>();
+                const nlohmann::json &quadrotor_json = paramDict["controller"]["quadrotor"];
+                quadrotor_mq = quadrotor_json["mq"].get<double>();
+                quadrotor_kp = loadVector3FromJson(quadrotor_json["kp"], "controller.quadrotor.kp");
+                quadrotor_kv = loadVector3FromJson(quadrotor_json["kv"], "controller.quadrotor.kv");
+                quadrotor_kr = quadrotor_json["kr"].get<double>();
+                quadrotor_hr = quadrotor_json["hr"].get<double>();
+
+                auto ki_it = quadrotor_json.find("ki");
+                if (ki_it != quadrotor_json.end())
+                {
+                    quadrotor_ki = loadVector3FromJson(*ki_it, "controller.quadrotor.ki");
+                }
+                else
+                {
+                    auto ki_x_it = quadrotor_json.find("ki_x");
+                    auto ki_y_it = quadrotor_json.find("ki_y");
+                    auto ki_z_it = quadrotor_json.find("ki_z");
+
+                    if (ki_x_it != quadrotor_json.end())
+                    {
+                        quadrotor_ki(0) = ki_x_it->get<double>();
+                    }
+                    if (ki_y_it != quadrotor_json.end())
+                    {
+                        quadrotor_ki(1) = ki_y_it->get<double>();
+                    }
+                    if (ki_z_it != quadrotor_json.end())
+                    {
+                        quadrotor_ki(2) = ki_z_it->get<double>();
+                    }
+                }
+                quadrotor_ki_z = quadrotor_ki(2);
+
+                auto int_limit_it = quadrotor_json.find("int_limit");
+                if (int_limit_it != quadrotor_json.end())
+                {
+                    quadrotor_int_limit = int_limit_it->get<double>();
+                }
 
                 QSLS_bar_mQ = paramDict["controller"]["QSLS"]["bar_mQ"].get<double>();
                 QSLS_bar_mL = paramDict["controller"]["QSLS"]["bar_mL"].get<double>();
