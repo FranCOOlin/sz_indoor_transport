@@ -141,7 +141,7 @@ public:
 
     void stateCallback(const std_msgs::Float64MultiArray::ConstPtr& msg, int index) {
         if (msg->data.size() >= 3) {
-            current_pos[index] << -msg->data[0], msg->data[1], -msg->data[2];
+            current_pos[index] << msg->data[0], msg->data[1], msg->data[2];
         }
         
     }
@@ -337,19 +337,19 @@ public:
             Eigen::Vector3d ddpFi = aL + ddR_TI * formation_offset;
             Eigen::Vector3d dddpFi = jL + dddR_TI * formation_offset;
 
-            msg_out.pd.x = -pFi.x();
+            msg_out.pd.x = pFi.x();
             msg_out.pd.y = pFi.y(); 
             msg_out.pd.z = -pFi.z();
             
-            msg_out.dpd.x = -dpFi.x(); 
+            msg_out.dpd.x = dpFi.x(); 
             msg_out.dpd.y = dpFi.y(); 
             msg_out.dpd.z = -dpFi.z();
             
-            msg_out.d2pd.x = -ddpFi.x(); 
+            msg_out.d2pd.x = ddpFi.x(); 
             msg_out.d2pd.y = ddpFi.y(); 
             msg_out.d2pd.z = -ddpFi.z();
             
-            msg_out.d3pd.x = -dddpFi.x(); 
+            msg_out.d3pd.x = dddpFi.x(); 
             msg_out.d3pd.y = dddpFi.y(); 
             msg_out.d3pd.z = -dddpFi.z();
 
