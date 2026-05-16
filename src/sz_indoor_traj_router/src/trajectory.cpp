@@ -6,6 +6,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <boost/bind.hpp>
 #include <std_msgs/Bool.h>
 #include <std_msgs/String.h>
 #include <std_msgs/Float64MultiArray.h>
@@ -31,6 +32,7 @@ private:
     std::vector<Eigen::Vector3d> eight_formation_offsets;
     std::vector<Eigen::Vector3d> virtual_eight_formation_offsets;
     std::vector<bool> ready_flags;
+    std::vector<bool> state_received;
     bool all_ready = false;
     bool trajectory_request_received = false;
     bool trajectory_started = false;
@@ -137,11 +139,17 @@ public:
         eight_formation_offsets.assign(count, Eigen::Vector3d::Zero());
         virtual_eight_formation_offsets.assign(count, Eigen::Vector3d::Zero());
         ready_flags.assign(count, false);
+        state_received.assign(count, false);
     }
 
     void stateCallback(const std_msgs::Float64MultiArray::ConstPtr& msg, int index) {
+        if (index < 0 || static_cast<size_t>(index) >= current_pos.size()) {
+            return;
+        }
         if (msg->data.size() >= 3) {
             current_pos[index] << msg->data[0], msg->data[1], msg->data[2];
+            state_received[index] = true;
+            tryRecordOffsets();
         }
         
     }
@@ -248,58 +256,93 @@ public:
             return;
         }
 
+        if (pending_traj_choice == 1 && radius < 1e-3) {
+            ROS_ERROR("Trajectory1 rejected: circle radius is %.6f. Master '%s' state is [%.3f, %.3f, %.3f]. Check init_state before traj_generation_flag.",
+                      radius,
+                      uav_names[master_index].c_str(),
+                      d_offsets[master_index].x(),
+                      d_offsets[master_index].y(),
+                      d_offsets[master_index].z());
+            all_ready = false;
+            return;
+        }
+
         active_traj_choice = pending_traj_choice;
         start_time = ros::Time::now().toSec();
         trajectory_started = true;
         ROS_INFO("Trajectory started: choice=%d, t reset to 0.", active_traj_choice);
     }
+
+    void tryRecordOffsets() {
+        if (all_ready) {
+            return;
+        }
+
+        for (size_t j = 0; j < uav_names.size(); ++j) {
+            if (!ready_flags[j] || !state_received[j]) {
+                return;
+            }
+        }
+
+        for (size_t j = 0; j < uav_names.size(); ++j) {
+            d_offsets[j] = current_pos[j];
+            d_offsets[j].z() = target_height;
+        }
+
+        Eigen::Vector3d master_radius = d_offsets[master_index] - circle_center;
+        start_angle = atan2(master_radius.y(), master_radius.x());
+        radius = master_radius.head<2>().norm();
+        circle_center.z() = target_height;
+
+        virtual_leader_0.setZero();
+        for (size_t j = 0; j < uav_names.size(); ++j) {
+            virtual_leader_0 += d_offsets[j];
+        }
+        virtual_leader_0 /= static_cast<double>(uav_names.size());
+
+        if (radius < 1e-3) {
+            ROS_WARN("Circle radius is %.6f after recording offsets. Trajectory1 will not start until master init_state is nonzero.", radius);
+            Eigen::Matrix3d eight_R0 = makeFrame(Eigen::Vector3d(eight_x_scale * omega, omega, 0.0));
+            for (size_t j = 0; j < uav_names.size(); ++j) {
+                eight_formation_offsets[j] = eight_R0.transpose() * (d_offsets[j] - d_offsets[master_index]);
+                virtual_eight_formation_offsets[j] = eight_R0.transpose() * (d_offsets[j] - virtual_leader_0);
+            }
+        } else {
+            Eigen::Matrix3d circle_R0 = makeFrame(Eigen::Vector3d(radius * omega * sin(start_angle),
+                                                                   -radius * omega * cos(start_angle),
+                                                                   0.0));
+            Eigen::Matrix3d eight_R0 = makeFrame(Eigen::Vector3d(eight_x_scale * omega, omega, 0.0));
+            for (size_t j = 0; j < uav_names.size(); ++j) {
+                circle_formation_offsets[j] = circle_R0.transpose() * (d_offsets[j] - d_offsets[master_index]);
+                eight_formation_offsets[j] = eight_R0.transpose() * (d_offsets[j] - d_offsets[master_index]);
+                virtual_eight_formation_offsets[j] = eight_R0.transpose() * (d_offsets[j] - virtual_leader_0);
+            }
+        }
+
+        all_ready = true;
+        ROS_INFO("ALL UAVS READY and init_state received! Offsets recorded.");
+        ROS_INFO("Master starts from current position [%.3f, %.3f, %.3f], circle center=[%.3f, %.3f, %.3f], actual radius=%.3f, start_angle=%.3f",
+                 d_offsets[master_index].x(), d_offsets[master_index].y(), d_offsets[master_index].z(),
+                 circle_center.x(), circle_center.y(), circle_center.z(), radius, start_angle);
+        ROS_INFO("Virtual leader initial position [%.3f, %.3f, %.3f]",
+                 virtual_leader_0.x(), virtual_leader_0.y(), virtual_leader_0.z());
+        tryStartTrajectory();
+    }
     
     void flagCallback(const std_msgs::Bool::ConstPtr& msg, int index) {
+            if (index < 0 || static_cast<size_t>(index) >= ready_flags.size()) {
+                return;
+            }
             if (msg->data && !ready_flags[index]) {
                 ready_flags[index] = true;
                 ROS_INFO("%s is READY at pos: [%.2f, %.2f, %.2f]", 
                          uav_names[index].c_str(), current_pos[index].x(), current_pos[index].y(), current_pos[index].z());
-    
-                if (!all_ready) {
-                    bool check = true;
-                    for (size_t j = 0; j < uav_names.size(); ++j) {
-                        if (!ready_flags[j]) { check = false; break; }
-                    }
-    
-                    if (check) {
-                        for (size_t j = 0; j < uav_names.size(); ++j) {
-                            d_offsets[j] = current_pos[j];
-                            d_offsets[j].z() = target_height;
-                        }
-                        Eigen::Vector3d master_radius = d_offsets[master_index] - circle_center;
-                        start_angle = atan2(master_radius.y(), master_radius.x());
-                        radius = master_radius.head<2>().norm();
-                        circle_center.z() = target_height;
-                        virtual_leader_0.setZero();
-                        for (size_t j = 0; j < uav_names.size(); ++j) {
-                            virtual_leader_0 += d_offsets[j];
-                        }
-                        virtual_leader_0 /= static_cast<double>(uav_names.size());
 
-                        Eigen::Matrix3d circle_R0 = makeFrame(Eigen::Vector3d(radius * omega * sin(start_angle),
-                                                                               -radius * omega * cos(start_angle),
-                                                                               0.0));
-                        Eigen::Matrix3d eight_R0 = makeFrame(Eigen::Vector3d(eight_x_scale * omega, omega, 0.0));
-                        for (size_t j = 0; j < uav_names.size(); ++j) {
-                            circle_formation_offsets[j] = circle_R0.transpose() * (d_offsets[j] - d_offsets[master_index]);
-                            eight_formation_offsets[j] = eight_R0.transpose() * (d_offsets[j] - d_offsets[master_index]);
-                            virtual_eight_formation_offsets[j] = eight_R0.transpose() * (d_offsets[j] - virtual_leader_0);
-                        }
-                        all_ready = true;
-                        ROS_INFO("ALL UAVS READY! Offsets recorded. Starting trajectory...");
-                        ROS_INFO("Master starts from current position [%.3f, %.3f, %.3f], circle center=[%.3f, %.3f, %.3f], actual radius=%.3f, start_angle=%.3f",
-                                 d_offsets[master_index].x(), d_offsets[master_index].y(), d_offsets[master_index].z(),
-                                 circle_center.x(), circle_center.y(), circle_center.z(), radius, start_angle);
-                        ROS_INFO("Virtual leader initial position [%.3f, %.3f, %.3f]",
-                                 virtual_leader_0.x(), virtual_leader_0.y(), virtual_leader_0.z());
-                        tryStartTrajectory();
-                    }
+                if (!state_received[index]) {
+                    ROS_WARN("%s ready flag arrived before init_state. Waiting for init_state before recording offsets.",
+                             uav_names[index].c_str());
                 }
+                tryRecordOffsets();
             }
         }
   
